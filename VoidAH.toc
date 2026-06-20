@@ -1,0 +1,18 @@
+## Interface: 120007
+## SavedVariablesPerCharacter: VoidHubCharDB
+## Title: |cff00c7ffVoidAH|r
+## Notes: Standalone Auction House from VoidUI
+## Author: Vede
+## Version: 1.2.2
+## SavedVariables: VoidUIAuctionDB
+
+# Embedded VoidLib so users do not need a separate addon download.
+Libs\VoidLib\VoidLib.lua
+Libs\VoidLib\Secrets.lua
+Libs\VoidLib\Logger.lua
+
+Core.lua
+Auction.lua
+ProfessionPlans.lua
+AuctionUI.lua
+VoidHubBundle.lua
