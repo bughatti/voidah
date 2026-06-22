@@ -171,4 +171,3 @@ loadFrame:SetScript("OnEvent", function()
     status[#status+1] = "OnAHShow=" .. (VoidUI.AH and VoidUI.AH.OnAHShow and "ok" or "missing")
 end)
 
-print("|cff00c7ff[VoidAH]|r Core parsed.")
