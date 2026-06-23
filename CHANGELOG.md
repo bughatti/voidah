@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.4] — 2026-06-23
+
+### Fixed
+- Cancelled auctions now leave your auctions list immediately instead of lingering until you
+  close and reopen the Auction House. After a cancel, the owned-auctions list re-queries (the
+  same way it does after posting), so the row disappears within about half a second.
+
 ## [1.2.3] — 2026-06-22
 
 ### Changed

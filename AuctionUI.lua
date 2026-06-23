@@ -2696,7 +2696,12 @@ function BuildMyAuctionsTab(parent)
                 local ok, err = pcall(C_AuctionHouse.CancelAuction, auctionID)
                 if not ok then
                     print("|cffff6060[VoidUI AH]|r Cancel failed: " .. tostring(err))
+                    return
                 end
+                -- Cancel doesn't refresh the owned list on its own, so re-query (like the
+                -- post path does) so the cancelled row disappears right away instead of
+                -- needing a close/reopen. The re-query fires OWNED_AUCTIONS_UPDATED -> UpdateMyAuctions.
+                C_Timer.After(0.5, function() if AH.QueryOwnedAuctions then AH:QueryOwnedAuctions() end end)
             end)
             print("|cff00ff00[VoidUI AH]|r Cancelling auction...")
         end)
@@ -2748,7 +2753,12 @@ local function UpdateMyAuctions()
                 local ok, err = pcall(C_AuctionHouse.CancelAuction, auctionID)
                 if not ok then
                     print("|cffff6060[VoidUI AH]|r Cancel failed: " .. tostring(err))
+                    return
                 end
+                -- Cancel doesn't refresh the owned list on its own, so re-query (like the
+                -- post path does) so the cancelled row disappears right away instead of
+                -- needing a close/reopen. The re-query fires OWNED_AUCTIONS_UPDATED -> UpdateMyAuctions.
+                C_Timer.After(0.5, function() if AH.QueryOwnedAuctions then AH:QueryOwnedAuctions() end end)
             end)
             print("|cff00ff00[VoidUI AH]|r Cancelling auction...")
         end)
