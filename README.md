@@ -71,7 +71,7 @@ The DB is shared with other Void* addons that benefit from price data (e.g. Void
 
 ## Professions data
 
-Bundled material lists were captured from **wow-professions.com** for Midnight 12.0.5 and verified against in-game recipe data. Quantities account for variance from Inspiration procs and skill-point yellow/green ranges so you won't run short. Gathering professions (Mining, Herbalism, Skinning) are intentionally excluded — you collect those, you don't buy them.
+Bundled material lists were captured from **wow-professions.com** for Midnight 12.0.7 and verified against in-game recipe data. Quantities account for variance from Inspiration procs and skill-point yellow/green ranges so you won't run short. Gathering professions (Mining, Herbalism, Skinning) are intentionally excluded — you collect those, you don't buy them.
 
 If a profession's recipe data changes in a future Midnight patch, the bundled lists will be refreshed in addon updates.
 
@@ -79,7 +79,7 @@ If a profession's recipe data changes in a future Midnight patch, the bundled li
 
 ## Compatibility
 
-- **WoW Interface 12.0.5** (Midnight Season 1)
+- **WoW Interface 12.0.7** (Midnight Season 1)
 - Works alongside Auctionator, TSM, and other AH addons (only one can be the active AH frame at a time — `/vah` toggles)
 - No taint in normal usage — uses public `C_AuctionHouse` APIs only
 
