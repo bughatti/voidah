@@ -968,7 +968,19 @@ local BUY_TIME_LEFT = {
     [3] = "|cff00ff00Very Long|r",
 }
 
+-- Modified clicks on AH rows: Ctrl = preview appearance (dress-up), Shift = link
+-- to chat. Blizzard's HandleModifiedItemClick respects the player's own bindings.
+-- Returns true if it consumed the click (caller should stop). Needs an item link,
+-- built from the itemID (falls back to a bare link if the item isn't cached yet).
+local function HandleRowModifiedClick(itemID)
+    if not itemID then return false end
+    if not (IsControlKeyDown() or IsShiftKeyDown()) then return false end
+    local link = select(2, C_Item.GetItemInfo(itemID)) or ("item:" .. itemID)
+    return (link and HandleModifiedItemClick(link)) or false
+end
+
 BrowseRowOnClick = function(self)
+    if HandleRowModifiedClick(self._itemID) then return end
     if not self._itemKey then return end
     buyItemKey = self._itemKey
     buyItemName = self._name and self._name:GetText() or ("Item " .. (self._itemID or "?"))
@@ -1100,6 +1112,7 @@ PopulateBuyRow = function(row, listing, visualIndex)
         row._deal:SetText("")
         row._extra:SetText("|cff00ff00[BUY]|r")
         row:SetScript("OnClick", function()
+            if HandleRowModifiedClick(buyItemKey and buyItemKey.itemID) then return end
             if not buyItemKey then return end
             local unitPriceSafe = VoidUI.AH.SafeNum(listing.unitPrice)
             if not unitPriceSafe then return end
@@ -1120,6 +1133,7 @@ PopulateBuyRow = function(row, listing, visualIndex)
         row._deal:SetText("")
         row._extra:SetText("|cff00ff00[BUY]|r")
         row:SetScript("OnClick", function()
+            if HandleRowModifiedClick(buyItemKey and buyItemKey.itemID) then return end
             if not listing.auctionID then return end
             local buyPrice = buyout or bid
             if not buyPrice then return end
@@ -1700,25 +1714,28 @@ local SELL_BAG_SORT_ORDER = { [2] = 1, [4] = 2, [0] = 3, [7] = 4 }
 -- Hidden tooltip for binding checks — classic addon technique, works everywhere
 local scanTip = CreateFrame("GameTooltip", "VoidUI_SellScanTip", nil, "GameTooltipTemplate")
 
--- C_Item.IsBound() returns true for Warbound items (TWW account-bound)
--- even though they're AH-sellable. Tooltip scan for "Soulbound" is the
--- only reliable way to distinguish truly unsellable items.
+-- An item is postable on the AH only if it isn't bound. C_Item.IsBound() is the
+-- reliable, localization-proof test: it returns true for Soulbound AND Warbound /
+-- account-bound items (incl. "Warbound until equipped") -- none of which can be
+-- listed -- so we filter them all out of the sell list. (The old code avoided
+-- IsBound and matched the tooltip string "Account Bound", which 12.0 renamed to
+-- "Warbound", so warbound items were slipping through.) The tooltip scan stays as
+-- a fallback for quest items, which aren't always flagged as bound.
 local function IsUnsellable(bag, slot)
+    local loc = ItemLocation:CreateFromBagAndSlot(bag, slot)
+    if not C_Item.DoesItemExist(loc) then return true end
+    if C_Item.IsBound(loc) then return true end
     scanTip:SetOwner(UIParent, "ANCHOR_NONE")
     scanTip:ClearLines()
     scanTip:SetBagItem(bag, slot)
     for i = 2, math.min(scanTip:NumLines(), 6) do
         local line = _G["VoidUI_SellScanTipTextLeft" .. i]
-        if line then
-            local text = line:GetText()
-            if text then
-                if text == ITEM_SOULBOUND          -- "Soulbound"
-                or text == ITEM_ACCOUNTBOUND        -- "Account Bound"
-                or text == ITEM_BIND_QUEST          -- "Quest Item"
-                then
-                    return true
-                end
-            end
+        local text = line and line:GetText()
+        if text and (text == ITEM_SOULBOUND          -- "Soulbound"
+            or text == ITEM_ACCOUNTBOUND              -- "Account Bound" (legacy)
+            or text == ITEM_BIND_QUEST)               -- "Quest Item"
+        then
+            return true
         end
     end
     return false

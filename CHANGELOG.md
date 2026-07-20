@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.5] — 2026-07-20
+
+### Added
+- **Ctrl-click any item to preview its appearance** in the dressing room (and
+  Shift-click to link it to chat) — works across the browse results and the
+  individual listings. Respects your own modified-click bindings.
+
+### Fixed
+- **Soulbound and Warbound items no longer clutter the Sell tab.** The filter was
+  matching the old "Account Bound" tooltip text, which 12.0 renamed to "Warbound",
+  so warbound items slipped through. It now uses the reliable bound-state check and
+  hides everything you can't actually post.
+
 ## [1.2.4] — 2026-06-23
 
 ### Fixed
