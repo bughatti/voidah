@@ -3,7 +3,7 @@
 ## Title: |cff00c7ffVoidAH|r
 ## Notes: Standalone Auction House from VoidUI Discord: https://discord.gg/7ZHmx7zMDh
 ## Author: Vede
-## Version: 1.2.4
+## Version: 1.2.5
 ## SavedVariables: VoidUIAuctionDB
 
 # Embedded VoidLib so users do not need a separate addon download.
