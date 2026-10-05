@@ -90,3 +90,5 @@ If a profession's recipe data changes in a future Midnight patch, the bundled li
 Built for Vede on Elune. Part of the Void* addon family.
 
 Profession leveling material lists adapted from [wow-professions.com](https://www.wow-professions.com/) guides — credit to their authors for the underlying research.
+
+*Part of the Void addon family · free M+ & raid player lookups at [voidscout.io](https://voidscout.io)*

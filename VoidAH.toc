@@ -1,9 +1,9 @@
-## Interface: 120007
+## Interface: 120100
 ## SavedVariablesPerCharacter: VoidHubCharDB
 ## Title: |cff00c7ffVoidAH|r
 ## Notes: Standalone Auction House from VoidUI Discord: https://discord.gg/7ZHmx7zMDh
 ## Author: Vede
-## Version: 1.2.5
+## Version: 1.2.6
 ## SavedVariables: VoidUIAuctionDB
 
 # Embedded VoidLib so users do not need a separate addon download.
