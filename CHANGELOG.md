@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.7] — 2026-10-06
+
+### Fixed
+- The "How many do you want to buy?" popup no longer errors (patch 12.x renamed the popup's text box).
+- Last-scan age reads "5m / 3h / 12d ago" instead of a huge number of minutes.
+- `/vah` away from an Auctioneer tells you to go to one instead of opening an empty panel.
+- The Void addons info panel (`/vhub info`) now lists only the addons you can actually get, with up-to-date descriptions.
+
 ## [1.2.6] — 2026-08-11
 
 ### Changed

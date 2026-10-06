@@ -842,8 +842,15 @@ local function UpdateStatusBar()
     -- Scan info
     local lastFull = AH:GetLastFullScan()
     local lastBrowse = AH:GetLastBrowseScan()
-    local fullAge = lastFull > 0 and VoidUI:FormatTime(time() - lastFull) or "never"
-    local browseAge = lastBrowse > 0 and VoidUI:FormatTime(time() - lastBrowse) or "never"
+    -- "5m ago" / "3h ago" / "161d ago" (VoidUI:FormatTime only does minutes,
+    -- so an old scan read "232276m 56s").
+    local function Age(sec)
+        if sec < 3600 then return math.floor(sec / 60) .. "m ago" end
+        if sec < 86400 then return math.floor(sec / 3600) .. "h ago" end
+        return math.floor(sec / 86400) .. "d ago"
+    end
+    local fullAge = lastFull > 0 and Age(time() - lastFull) or "never"
+    local browseAge = lastBrowse > 0 and Age(time() - lastBrowse) or "never"
     statusBar._scanInfo:SetText("|cff888888Full: " .. fullAge .. " | Browse: " .. browseAge .. " | DB: " .. AH:GetDBStats() .. " items|r")
 
     -- Profit
@@ -920,6 +927,12 @@ StaticPopupDialogs["VOIDUI_AH_CONFIRM_BUY"] = {
     preferredIndex = 3,
 }
 
+-- StaticPopup edit box: 12.x dialogs expose GetEditBox()/.EditBox; the old
+-- lowercase .editBox field is gone (nil).
+local function PopupEditBox(p)
+    return p and ((p.GetEditBox and p:GetEditBox()) or p.EditBox or p.editBox)
+end
+
 StaticPopupDialogs["VOIDUI_AH_BUY_COMMODITY"] = {
     text = "How many %s do you want to buy?\n(Cheapest: %s each)",
     button1 = "Buy",
@@ -927,11 +940,15 @@ StaticPopupDialogs["VOIDUI_AH_BUY_COMMODITY"] = {
     hasEditBox = true,
     editBoxWidth = 80,
     OnShow = function(self)
-        self.editBox:SetText("1")
-        self.editBox:SetFocus()
+        local eb = PopupEditBox(self)
+        if eb then
+            eb:SetText("1")
+            eb:SetFocus()
+        end
     end,
     OnAccept = function(self, data)
-        local qty = tonumber(self.editBox:GetText()) or 1
+        local eb = PopupEditBox(self)
+        local qty = tonumber(eb and eb:GetText()) or 1
         if qty > 0 and data and data.itemID then
             pendingCommodityPurchase = { itemID = data.itemID, quantity = qty }
             C_AuctionHouse.StartCommoditiesPurchase(data.itemID, qty)
