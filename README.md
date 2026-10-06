@@ -1,94 +1,74 @@
 # VoidAH
 
-**Full Auction House replacement panel with bundled profession leveling plans and shopping lists.**
+**A full Auction House replacement with built-in profession leveling plans and shopping lists.**
 
-Replaces Blizzard's stock AH window with a six-tab panel: Browse, Sell, My Auctions, Deals, Scan, and **Professions**. The Professions tab ships with curated 1→100 leveling shopping lists for all 9 crafting professions (sourced from wow-professions.com), one-click Buy buttons that route to Browse + set a buy-target banner with live bag-count tracking, and "+ List" buttons that add items to a persistent shopping list by itemID.
+VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Sell, My Auctions, Deals, Scan, and **Professions**. The Professions tab ships leveling shopping lists for all 9 crafting professions, with one-click Buy buttons that track how many you've bought as you go.
 
 ---
 
 ## Features
 
-### Browse tab
-- Category tree + search box
-- Results sorted by price/ilvl
-- Item-key filtering
-- Secure buy bar with quantity input
+### Browse
+- **Category tree and search box**, results sorted by price or item level
+- **Secure buy bar** with a quantity box
+- **Ctrl-click** any item to preview it in the dressing room, **Shift-click** to link it in chat
 
-### Sell tab
-- Stack and total-quantity inputs
-- Deposit calculator
-- Smart undercut button (auto-fills price below cheapest listing)
-- Copper-precision pricing
+### Sell
+- Stack-size and total-quantity inputs with a **deposit calculator**
+- **Smart undercut** — fills in a price just below the cheapest listing
+- Copper-precise pricing; soulbound and warbound items are hidden automatically
 
-### My Auctions tab
-- All your active listings in one view
-- Cancel buttons per row
+### My Auctions
+- All your active listings in one view, with a **cancel button** on each row
 
-### Deals tab
-- Auto-flags listings underpriced versus your scanned price database
+### Deals
+- **Flags listings priced well below** your scanned price history
 - One-click buy on bargain commodities
 
-### Scan tab
-- Full or browse scan engine with progress bar
-- Throttled API queries to avoid CF rate limits
-- Persistent per-realm price database
-- **Shopping List** with per-row Buy button — survives reloads
+### Scan
+- **Full or browse scan** with a progress bar, throttled to stay within Blizzard's limits
+- A **per-realm price database** that persists between sessions
+- A **shopping list** with a Buy button on every row — survives reloads
 
-### Professions tab ⭐
-- Bundled leveling guides for **Cooking, Alchemy, Jewelcrafting, Blacksmithing, Tailoring, Leatherworking, Engineering, Inscription, Enchanting**
-- Each plan shows: trainer location, notes, leveling steps with skill ranges, and total material lists
-- **[Buy]** button per material → routes to Browse with item pre-selected, sets a buy-target banner that tracks bag-count progress (e.g. "47 / 200 Spiced Biscuits in bags")
-- **[+ List]** button → adds itemID to the Shopping List on the Scan tab
-- Trainer location prompts so you don't have to alt-tab to a wiki
+### Professions
+- **Leveling plans** for Cooking, Alchemy, Jewelcrafting, Blacksmithing, Tailoring, Leatherworking, Engineering, Inscription, and Enchanting
+- Each plan shows the **trainer location**, notes, the leveling steps with skill ranges, and the full material list
+- **Buy** jumps to Browse with the item selected and shows a banner that tracks your progress (e.g. "47 / 200 in bags")
+- **+ List** adds the material to your shopping list on the Scan tab
 
 ---
 
-## Slash commands
+## Slash Commands
 
-| Command | Action |
+| Command | What it does |
 |---|---|
-| `/vah` | Toggle the AH panel (also works while AH is open as the replacement) |
+| `/vah` | Bring up the VoidAH panel if it didn't open on its own |
 
-The panel auto-attaches when you talk to an Auctioneer. Press the close button or interact with the auctioneer to dismiss.
-
----
-
-## Installation
-
-1. Download and extract to `Interface/AddOns/VoidAH/`
-2. Reload your UI (`/reload`)
-3. Visit any Auctioneer NPC — VoidAH replaces the default panel automatically
+You rarely need it — VoidAH opens automatically when you talk to an Auctioneer.
 
 ---
 
-## Storage
+## Getting Started
 
-- **`VoidUIAuctionDB`** (account-wide): per-realm price database, shopping list, scan history, profession plan progress
-
-The DB is shared with other Void* addons that benefit from price data (e.g. VoidBags reads it for AH threshold checks).
+1. Install with the CurseForge app, or copy the `VoidAH` folder into `World of Warcraft/_retail_/Interface/AddOns/`.
+2. Restart WoW or `/reload`.
+3. Talk to any Auctioneer — VoidAH replaces the default window.
 
 ---
 
-## Professions data
+## Good to Know
 
-Bundled material lists were captured from **wow-professions.com** for Midnight 12.0.7 and verified against in-game recipe data. Quantities account for variance from Inspiration procs and skill-point yellow/green ranges so you won't run short. Gathering professions (Mining, Herbalism, Skinning) are intentionally excluded — you collect those, you don't buy them.
-
-If a profession's recipe data changes in a future Midnight patch, the bundled lists will be refreshed in addon updates.
+- **Profession lists** are adapted from [wow-professions.com](https://www.wow-professions.com/) guides (credit to their authors) and checked against in-game recipes. Quantities include a buffer so you don't run short. Gathering professions are left out — you gather those, not buy them.
+- Your price history is shared with **VoidBags**, which uses it to spot items worth selling.
 
 ---
 
 ## Compatibility
 
-- **WoW Interface 12.0.7** (Midnight Season 1)
-- Works alongside Auctionator, TSM, and other AH addons (only one can be the active AH frame at a time — `/vah` toggles)
-- No taint in normal usage — uses public `C_AuctionHouse` APIs only
+- **WoW 12.1** (Midnight Season 2)
+- Standalone — nothing else to install
+- Works alongside Auctionator, TSM, and other AH addons (only one can be the active AH window at a time)
 
 ---
 
-## Credits
-
-Built for Vede on Elune. Part of the Void* addon family.
-
-Profession leveling material lists adapted from [wow-professions.com](https://www.wow-professions.com/) guides — credit to their authors for the underlying research.
-
-*Part of the Void addon family · free M+ & raid player lookups at [voidscout.io](https://voidscout.io)*
+*Part of the Void addon family by Vede · MIT licensed · free M+ & raid player lookups at [voidscout.io](https://voidscout.io) · more addons & apps at [tinkerline.io](https://tinkerline.io) · [Discord](https://discord.gg/7ZHmx7zMDh)*
