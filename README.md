@@ -42,7 +42,7 @@ VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Se
 
 | Command | What it does |
 |---|---|
-| `/vah` | Bring up the VoidAH panel if it didn't open on its own |
+| `/vah` | Bring up the VoidAH panel at an Auctioneer if it didn't open on its own |
 
 You rarely need it — VoidAH opens automatically when you talk to an Auctioneer.
 

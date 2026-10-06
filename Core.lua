@@ -153,6 +153,11 @@ SlashCmdList.VOIDAH = function(msg)
         print("|cffff4444[VoidAH]|r VoidUI.AH not available — addon failed to initialize. Check for Lua errors.")
         return
     end
+    -- Away from an Auctioneer the panel opens but can't search or post — say so.
+    if not VoidUI.AH.ahOpen then   -- set on AUCTION_HOUSE_SHOW, cleared on close
+        print("|cff00c7ff[VoidAH]|r Talk to an Auctioneer to use VoidAH — it opens automatically there.")
+        return
+    end
     if VoidUI.AH.OnAHShow then
         print("|cff00c7ff[VoidAH]|r Forcing panel show.")
         VoidUI.AH.ahOpen = true
