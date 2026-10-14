@@ -65,7 +65,8 @@ You rarely need it — VoidAH opens automatically when you talk to an Auctioneer
 
 ## Compatibility
 
-- **WoW 12.1** (Midnight Season 2)
+- **WoW 12.1.5** (Midnight Season 2)
+- **WoW Forever** supported too
 - Standalone — nothing else to install
 - Works alongside Auctionator, TSM, and other AH addons (only one can be the active AH window at a time)
 

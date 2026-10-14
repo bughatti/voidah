@@ -4,6 +4,13 @@
 ----------------------------------------------------------------------
 local AH = VoidUI.AH
 
+-- WoW Forever's client drops the old global item functions (retail still
+-- aliases them) — use the C_Item versions where they exist.
+local GetItemClassInfo    = (C_Item and C_Item.GetItemClassInfo) or GetItemClassInfo
+local GetItemSubClassInfo = (C_Item and C_Item.GetItemSubClassInfo) or GetItemSubClassInfo
+local GetItemInfoInstant  = (C_Item and C_Item.GetItemInfoInstant) or GetItemInfoInstant
+local GetItemCount        = (C_Item and C_Item.GetItemCount) or GetItemCount
+
 local PANEL_W, PANEL_H = 900, 620
 local TAB_NAMES = { "Browse", "Sell", "My Auctions", "Deals", "Scan", "Professions" }
 local ROW_HEIGHT = 24
@@ -3919,7 +3926,9 @@ end
 -- Browse results event hook (for non-scan browsing)
 ----------------------------------------------------------------------
 local browseEventFrame = CreateFrame("Frame")
-browseEventFrame:RegisterEvent("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
+if AH.supported then   -- event doesn't exist on the classic auction house
+    browseEventFrame:RegisterEvent("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
+end
 browseEventFrame:RegisterEvent("ITEM_DATA_LOAD_RESULT")
 browseEventFrame:RegisterEvent("BAG_UPDATE")
 browseEventFrame:SetScript("OnEvent", function(self, event, ...)
