@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.8] — 2026-10-14
+
+### Changed
+- Updated for WoW 12.1.5 — no longer shows as out of date.
+- **Works in WoW Forever** — the auction house window, scans and prices.
+
 ## [1.2.7] — 2026-10-06
 
 ### Fixed

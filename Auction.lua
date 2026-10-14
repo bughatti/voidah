@@ -8,6 +8,15 @@ local mod = VoidUI:NewModule("Auction")
 VoidUI.AH = {}
 local AH = VoidUI.AH
 
+-- VoidAH is built on the modern auction house (C_AuctionHouse). A client
+-- with the classic auction house (no C_AuctionHouse) would error on its
+-- events and lose Blizzard's window under ours — so there we stand down.
+AH.supported = C_AuctionHouse ~= nil and C_AuctionHouse.SendBrowseQuery ~= nil
+
+-- WoW Forever's client drops the old global item functions (retail still
+-- aliases them) — use the C_Item versions where they exist.
+local GetItemClassInfo = (C_Item and C_Item.GetItemClassInfo) or GetItemClassInfo
+
 ----------------------------------------------------------------------
 -- 12.0.5 secret-value safety (delegates to VoidLib.Secrets)
 --
@@ -518,6 +527,17 @@ local eventFrame = CreateFrame("Frame")
 function mod:Init()
     -- Initialize saved variables
     if not VoidUIAuctionDB then VoidUIAuctionDB = {} end
+
+    if not AH.supported then
+        -- classic auction house: leave Blizzard's window alone, say why once
+        eventFrame:RegisterEvent("AUCTION_HOUSE_SHOW")
+        eventFrame:SetScript("OnEvent", function()
+            if AH.warned then return end
+            AH.warned = true
+            print("|cff00c7ffVoidAH|r: this game uses the classic auction house, which VoidAH doesn't support yet — using Blizzard's.")
+        end)
+        return
+    end
 
     -- Register events
     eventFrame:RegisterEvent("AUCTION_HOUSE_SHOW")
