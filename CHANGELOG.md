@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.9] — 2026-10-19
+
+### Added
+- **"Midnight only" checkbox on the Browse tab** (on by default). Hides items from older expansions, so you don't buy an old enchant, gem or consumable that won't work on current-season gear. Untick it to see everything.
+
 ## [1.2.8] — 2026-10-14
 
 ### Changed

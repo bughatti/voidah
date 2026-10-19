@@ -10,6 +10,7 @@ VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Se
 
 ### Browse
 - **Category tree and search box**, results sorted by price or item level
+- **"Midnight only" checkbox** (on by default) hides older-expansion items, so you never buy an old enchant or gem that won't work on current gear
 - **Secure buy bar** with a quantity box
 - **Ctrl-click** any item to preview it in the dressing room, **Shift-click** to link it in chat
 

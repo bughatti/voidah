@@ -874,6 +874,44 @@ local function UpdateStatusBar()
 end
 
 ----------------------------------------------------------------------
+-- "Current expansion only". ON by default: an older expansion's enchant/gem/
+-- consumable won't work on current-season gear, and buying one by mistake is
+-- wasted gold. Toggle on the Browse tab.
+--
+-- Filtered CLIENT-SIDE on GetItemInfo's expansionID (15th return). Blizzard's
+-- own Enum.AuctionHouseFilter.CurrentExpansionOnly returned ZERO results for
+-- Item Enhancement > Finger on 12.1.5 (tested 2026-10-19) even though Midnight
+-- ring enchants were listed -- while expansionID was right (Amani Mastery = 11,
+-- older ring enchants 5-8).
+----------------------------------------------------------------------
+local function CurrentExpansionOnly()
+    return not (VoidUIAuctionDB and VoidUIAuctionDB.currentExpansionOnly == false)
+end
+
+local function BrowseFilters()
+    return {}
+end
+
+-- true = hide this item (known to be from an older expansion). Items whose data
+-- isn't loaded yet stay visible (and get requested) rather than vanishing.
+local function IsOldExpansionItem(itemID)
+    if not CurrentExpansionOnly() then return false end
+    local cur = LE_EXPANSION_LEVEL_CURRENT or (GetExpansionLevel and GetExpansionLevel())
+    if not cur then return false end
+    local expac = select(15, C_Item.GetItemInfo(itemID))
+    if expac == nil then
+        if C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(itemID) end
+        return false
+    end
+    return expac < cur
+end
+
+local function CurrentExpansionName()
+    local lvl = LE_EXPANSION_LEVEL_CURRENT or (GetExpansionLevel and GetExpansionLevel())
+    return (lvl and _G["EXPANSION_NAME" .. lvl]) or "Current expansion"
+end
+
+----------------------------------------------------------------------
 -- TAB 1: Browse  (category drill-down + virtual scroll)
 ----------------------------------------------------------------------
 SendCategoryBrowseQuery = function()
@@ -900,7 +938,7 @@ SendCategoryBrowseQuery = function()
         C_AuctionHouse.SendBrowseQuery({
             searchString = searchText,
             sorts = {{ sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort = false }},
-            filters = {},
+            filters = BrowseFilters(),
             itemClassFilters = classFilters,
         })
     end)
@@ -1417,10 +1455,38 @@ function BuildBrowseTab(parent)
         BrowseSearch(self:GetText())
     end)
 
+    -- "<Expansion> only" checkbox, just left of the search box.
+    local expCheck = CreateFrame("CheckButton", nil, navBar, "UICheckButtonTemplate")
+    expCheck:SetSize(22, 22)
+    local expLabel = navBar:CreateFontString(nil, "OVERLAY")
+    VoidUI:SetFont(expLabel, 10, "")
+    expLabel:SetText(CurrentExpansionName() .. " only")
+    expLabel:SetTextColor(0.9, 0.9, 0.9)
+    expLabel:SetPoint("RIGHT", searchBox, "LEFT", -10, 0)
+    expCheck:SetPoint("RIGHT", expLabel, "LEFT", -1, 0)
+    expCheck:SetChecked(CurrentExpansionOnly())
+    expCheck:SetScript("OnClick", function(self)
+        VoidUIAuctionDB = VoidUIAuctionDB or {}
+        VoidUIAuctionDB.currentExpansionOnly = self:GetChecked() and true or false
+        -- Re-run whatever is on screen with the new filter.
+        if browseView == BROWSE_VIEW_RESULTS then
+            local t = searchBox:GetText()
+            if t and t ~= "" then BrowseSearch(t) else SendCategoryBrowseQuery() end
+        end
+    end)
+    expCheck:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText(CurrentExpansionName() .. " only")
+        GameTooltip:AddLine("Hide items from older expansions -- their enchants, gems and consumables don't work on current-season gear.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    expCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    parent._expCheck = expCheck
+
     local countLabel = navBar:CreateFontString(nil, "OVERLAY")
     VoidUI:SetFont(countLabel, 9, "")
     countLabel:SetTextColor(0.7, 0.7, 0.7)
-    countLabel:SetPoint("RIGHT", searchBox, "LEFT", -10, 0)
+    countLabel:SetPoint("RIGHT", expCheck, "LEFT", -8, 0)
     parent._countLabel = countLabel
 
     -- Column headers (results view only)
@@ -1667,7 +1733,7 @@ function BrowseSearch(text)
         C_AuctionHouse.SendBrowseQuery({
             searchString = text,
             sorts = {{ sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort = false }},
-            filters = {},
+            filters = BrowseFilters(),
             itemClassFilters = classFilters,
         })
     end)
@@ -1684,6 +1750,7 @@ local function UpdateBrowseResults()
     if results and #results > 0 then
         for _, r in ipairs(results) do
             local itemID = r.itemKey.itemID
+          if not IsOldExpansionItem(itemID) then
             -- Two ilvl sources — take the higher (more accurate) one:
             --   itemKey.itemLevel = actual listing ilvl (M+ / raid / etc), 0 for commodities
             --   GetItemInfo = base template ilvl (correct for fixed-ilvl gear, low for variable)
@@ -1707,6 +1774,7 @@ local function UpdateBrowseResults()
                 containsOwnerItem = r.containsOwnerItem,
                 ilvl = ilvl,
             }
+          end
         end
     end
 
