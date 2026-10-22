@@ -31,6 +31,10 @@ if not VoidUI or not VoidUI.NewModule then
         Auction = {
             enabled         = true,
             autoScanOnOpen  = false,
+            -- Refresh prices in the background when the last full scan is over
+            -- 12h old. ReplicateItems runs alongside browsing (it doesn't touch
+            -- search results), so this keeps prices current without interrupting.
+            autoScanWhenStale = true,
             undercutCopper  = 100,
             showBagValues   = true,
         },

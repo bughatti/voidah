@@ -273,6 +273,7 @@ function AH:StartFullScan()
     self.scanProgress = 0
     self.scanTotal = 0
     self.scanProcessed = 0
+    self._scanMin = {}   -- this scan's lowest per-unit buyout per item (applied at finish)
 
     self:_Enqueue(function()
         C_AuctionHouse.ReplicateItems()
@@ -309,11 +310,13 @@ function AH:_ProcessReplicateBatch(startIndex, totalCount)
             }
         end)
         if ok and data and data.itemID and data.buyout and data.buyout > 0 then
+            -- Track the lowest listing seen THIS scan. (Was compared against the
+            -- stored price, so a price could only ever go DOWN -- every item kept
+            -- its all-time low and a full scan never corrected a price that rose.)
             local perUnit = math.floor(data.buyout / data.count)
-            local current = self:GetPrice(data.itemID)
-            if not current or perUnit < current then
-                self:SetPrice(data.itemID, perUnit)
-            end
+            self._scanMin = self._scanMin or {}
+            local seen = self._scanMin[data.itemID]
+            if not seen or perUnit < seen then self._scanMin[data.itemID] = perUnit end
         end
     end
 
@@ -333,6 +336,11 @@ function AH:_ProcessReplicateBatch(startIndex, totalCount)
 end
 
 function AH:_FinishFullScan()
+    -- Every item listed right now gets today's lowest price (up OR down).
+    for itemID, price in pairs(self._scanMin or {}) do
+        self:SetPrice(itemID, price)
+    end
+    self._scanMin = nil
     self.scanning = false
     self.scanType = nil
     self.scanProgress = 1
@@ -580,7 +588,9 @@ function mod:OnEvent(event, ...)
         throttleReady = true
 
         local cfg = VoidUI:GetModuleConfig("Auction")
-        if cfg.autoScanOnOpen and AH:CanFullScan() then
+        local stale = cfg.autoScanWhenStale ~= false
+            and (time() - (AH:GetLastFullScan() or 0)) > 12 * 3600
+        if (cfg.autoScanOnOpen or stale) and AH:CanFullScan() then
             C_Timer.After(0.5, function()
                 AH:StartFullScan()
             end)
