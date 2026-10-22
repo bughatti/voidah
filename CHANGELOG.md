@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.10] — 2026-10-21
+
+### Fixed
+- **Posting an auction** no longer triggers "VoidAH tried to call the protected function" errors. A successful post was being mistaken for a failure, so VoidAH retried it from the same click, and the game blocked the retries.
+- **Posts that need confirmation**, like Blizzard's price warning, now show a "Post this?" box. Before, they were silently never posted.
+
 ## [1.2.9] — 2026-10-19
 
 ### Added

@@ -2644,6 +2644,33 @@ function SellTab_SetItem(parent, itemLocation)
     RefreshSellItemList()
 end
 
+-- The game asked for confirmation before posting (Blizzard's equivalent is the
+-- AUCTION_HOUSE_POST_WARNING popup). The Accept click is a fresh hardware event,
+-- so the protected Confirm* call is allowed there.
+StaticPopupDialogs["VOIDAH_CONFIRM_POST"] = {
+    text = "Post %s?\n\nThe game wants confirmation before posting (often a price far from the usual).",
+    button1 = "Post",
+    button2 = "Cancel",
+    OnShow = function() StaticPopup_Hide("AUCTION_HOUSE_POST_WARNING") end,
+    OnAccept = function(self, data)
+        if not (data and data.args and C_Item.DoesItemExist(data.args[1])) then return end
+        local a = data.args
+        if data.commodity then
+            C_AuctionHouse.ConfirmPostCommodity(a[1], a[2], a[3], a[4])
+        else
+            C_AuctionHouse.ConfirmPostItem(a[1], a[2], a[3], nil, a[5])
+        end
+    end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
+
+local function ShowPostConfirm(commodity, args, itemName)
+    StaticPopup_Show("VOIDAH_CONFIRM_POST", itemName, nil, { commodity = commodity, args = args })
+end
+
 function SellTab_PostAuction(parent)
     if not sellPending.itemLocation then return end
 
@@ -2667,42 +2694,34 @@ function SellTab_PostAuction(parent)
     local itemName = C_Item.GetItemInfo(sellPending.itemID) or "?"
 
     local rawStatus = C_AuctionHouse.GetItemCommodityStatus(sellPending.itemLocation)
-
-    local posted = false
     local isCommodity = (rawStatus == 2 or sellPending.isCommodity)
 
-    -- Try PostCommodity first if commodity.
-    -- IMPORTANT: PostCommodity silently fails when unitPrice has any copper
-    -- component. Round to whole silver before posting commodities.
+    -- ONE post call per click, no pcall -- the same way Blizzard's sell frames do it.
+    -- PostItem/PostCommodity return needsConfirmation, NOT success: false = posted
+    -- (success arrives as AUCTION_HOUSE_AUCTION_CREATED), true = the game wants a
+    -- confirm (e.g. price warning) before it posts. The old code read false as
+    -- "failed" and fired up to two more posts from the same click -> the second
+    -- protected call is ADDON_ACTION_BLOCKED (reported 2026-10-21), and a
+    -- needs-confirmation post was silently never confirmed.
+    local args
     if isCommodity then
+        -- PostCommodity silently fails when unitPrice has any copper component.
+        -- Round to whole silver before posting commodities.
         local commodityPrice = math.floor(totalPrice / 100) * 100
         if commodityPrice < 100 then commodityPrice = 100 end  -- 1s minimum
         if commodityPrice ~= totalPrice then
             print(("|cffffaa00VoidUI AH|r: Commodity price rounded to %s (PostCommodity rejects copper)."):format(
                 VoidUI:FormatMoney(commodityPrice)))
         end
-        local ok, ret = pcall(C_AuctionHouse.PostCommodity,
-            sellPending.itemLocation, duration, qty, commodityPrice)
-        if ok and ret ~= false then posted = true end
-    end
-
-    -- Fallback: PostItem with nil bid
-    if not posted then
-        local ok, ret = pcall(C_AuctionHouse.PostItem,
-            sellPending.itemLocation, duration, qty, nil, totalPrice)
-        if ok and ret ~= false then posted = true end
-    end
-
-    -- Fallback: PostItem with bid = buyout
-    if not posted then
-        local ok, ret = pcall(C_AuctionHouse.PostItem,
-            sellPending.itemLocation, duration, qty, totalPrice, totalPrice)
-        if ok and ret ~= false then posted = true end
-    end
-
-    if not posted then
-        print("|cffff0000VoidUI AH|r: Failed to post " .. itemName .. ".")
-        return
+        args = { sellPending.itemLocation, duration, qty, commodityPrice }
+        if C_AuctionHouse.PostCommodity(unpack(args)) then
+            ShowPostConfirm(true, args, itemName)
+        end
+    else
+        args = { sellPending.itemLocation, duration, qty, nil, totalPrice }
+        if C_AuctionHouse.PostItem(args[1], args[2], args[3], nil, totalPrice) then
+            ShowPostConfirm(false, args, itemName)
+        end
     end
 
     -- Store pending post info for OnAuctionCreated to confirm
