@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.11] — 2026-10-22
+
+### Fixed
+- **Prices only ever went down.** A full scan compared each listing to the price you already had, so an item kept its all-time low forever, and a price that went up was never corrected. A full scan now sets every listed item to today's lowest price, up or down.
+
+### Added
+- **Prices refresh on their own.** If your last full scan is more than 12 hours old, opening the Auction House starts one in the background while you browse. Your old setting to scan on every visit still works.
+
 ## [1.2.10] — 2026-10-21
 
 ### Fixed

@@ -28,7 +28,8 @@ VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Se
 
 ### Scan
 - **Full or browse scan** with a progress bar, throttled to stay within Blizzard's limits
-- A **per-realm price database** that persists between sessions
+- A **per-realm price database** that persists between sessions; a full scan sets each item to today's lowest price, up or down
+- **Prices stay fresh on their own** — if your last full scan is over 12 hours old, opening the AH runs one in the background while you browse
 - A **shopping list** with a Buy button on every row — survives reloads
 
 ### Professions
