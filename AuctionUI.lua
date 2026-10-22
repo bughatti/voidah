@@ -1817,6 +1817,16 @@ local function IsUnsellable(bag, slot)
     local loc = ItemLocation:CreateFromBagAndSlot(bag, slot)
     if not C_Item.DoesItemExist(loc) then return true end
     if C_Item.IsBound(loc) then return true end
+    -- "Warbound until equipped" items aren't bound yet (IsBound = false) but
+    -- still can't be listed -- they leaked into the sell list.
+    if C_Item.IsBoundToAccountUntilEquip and C_Item.IsBoundToAccountUntilEquip(loc) then return true end
+    -- Blizzard's own "can this be posted?" check (no error popup) catches
+    -- anything else the AH refuses.
+    -- Only meaningful while the AH is open (it answers "no" to everything otherwise).
+    if AH and AH.ahOpen and C_AuctionHouse and C_AuctionHouse.IsSellItemValid then
+        local ok, valid = pcall(C_AuctionHouse.IsSellItemValid, loc, false)
+        if ok and valid == false then return true end
+    end
     scanTip:SetOwner(UIParent, "ANCHOR_NONE")
     scanTip:ClearLines()
     scanTip:SetBagItem(bag, slot)
