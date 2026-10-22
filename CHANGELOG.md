@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.12] — 2026-10-22
+
+### Fixed
+- **Warbound items in the Sell list.** "Warbound until equipped" items showed up for selling even though the Auction House won't take them. The Sell list now leaves out anything the AH refuses.
+
 ## [1.2.11] — 2026-10-22
 
 ### Fixed
