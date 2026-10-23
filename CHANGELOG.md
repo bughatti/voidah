@@ -1,5 +1,33 @@
 # Changelog
 
+## [1.2.13] — 2026-10-23
+
+### Fixed
+- **Gear, decor and other single items wouldn't post.** The auction house only takes prices in whole silver, and a % undercut nearly always leaves copper, so the post was silently dropped. Prices now fill in whole silver, and any copper you type is rounded off. Commodities were already rounded, which is why they still worked.
+- **"48h" posted a 24-hour auction, and "24h" posted 12 hours.** Each button now posts the duration it says. Checked live: the old 48h left 86,399 seconds.
+- **My Auctions showed "Short" for every auction.** It now shows the real time left.
+- **Commodity buys now show the real total before you pay.** Buying a stack used to complete with only the cheapest per-unit price shown, so a big quantity could climb into pricier listings unseen. Click "Get Price" for the total, then "Buy Now". Cancel now really cancels.
+- **Cancel on My Auctions** works every time. Before, it could be blocked by the game if anything else was queued.
+- **Full scan stuck at "0% (0 / 0)".** Blizzard only answers one full scan every 15 minutes. A scan that gets no answer now stops after a minute instead of hanging.
+- **Browse showed nothing while a background price scan was running.**
+- **"Midnight only" let some old-expansion items through** when their data hadn't loaded yet.
+- **Deals.** One odd day of prices could turn hundreds of items into fake 0% deals. The market price is now the middle of the last 7 days, and an item needs 3 days of scans before it counts as a deal. Savings show as a positive amount, missing item names fill in, and clicking a deal opens its listings.
+- **The Deal % column on Browse** always read 100%. It now compares the live price to the 7-day market.
+- **Sell price ignored your % undercut** and could overwrite a price you'd typed.
+- **Gear could show the wrong lowest price.**
+- **Shopping-list alerts** didn't fire on the first visit after prices went stale.
+- **Bid-only listings** couldn't be bid on, and your own listings could be clicked to buy.
+- **Requests the AH drops are retried** instead of lost, so listings don't hang on "Loading...".
+- Commodity purchases no longer say "Purchase successful!" twice.
+- Scroll bars no longer stick out past the right edge of the lists.
+- The Professions tab drew boxes where its symbols should be.
+
+### Changed
+- **Profession plans rechecked against the current guides for 12.1.5.** No guide changed since launch, but four lists were wrong from the start. Tailoring counted both 65-90 linings, so it told you to buy twice the cloth. Engineering double-counted its ore. Enchanting overstated dust, shards and motes. Alchemy was 240 Sunglass Vials short. Cooking's skill ranges are corrected too.
+- **Posting now says what happened.** You see a "Posting..." line in chat, and if the auction house rejects a post or purchase, its reason shows in chat.
+- **Sell list:** a stackable item (mats, flasks) split across bag slots shows as one row with your total, and posting defaults to all of it. Gear and other single items still post one at a time.
+- **My Auctions:** sold auctions show "Sold" and no Cancel button.
+
 ## [1.2.12] — 2026-10-22
 
 ### Fixed
