@@ -159,6 +159,7 @@ local pendingItems = {}
 local ilvlCache = {}
 local ilvlSortOrder = nil  -- nil / "asc" / "desc"
 local pendingRefresh = false
+local pendingRefilter = false  -- coalesces the Midnight-only re-filter after item data loads
 local browseOffset = 0
 local BROWSE_VISIBLE = 20
 
@@ -326,6 +327,16 @@ local BrowseRowOnClick
 local PopulateBuyRow
 local ShowConfirmBar
 local HideConfirmBar
+local ApplySellLivePrice
+-- Price lookups read result #1 as the lowest. Commodities come back price-sorted
+-- anyway; items (gear) do NOT unless asked, so an unsorted query priced gear wrong.
+local PRICE_SORT = {{ sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort = false }}
+-- "AH prices must be in silver increments" (Blizzard_AuctionHouseSellFrame).
+-- A price with copper in it is silently dropped by the server -- for single
+-- items as well as commodities -- and a % undercut nearly always makes copper.
+local function ToSilver(copper)
+    return math.max(100, math.floor(copper / 100) * 100)
+end
 
 local function BuildTreeFlatList()
     wipe(treeFlatList)
@@ -489,7 +500,10 @@ local function CreateScrollList(parent, rowCount, rowHeight, createRowFunc, upda
     container:SetPoint("BOTTOMRIGHT", -10, 36)
 
     local scrollFrame = CreateFrame("ScrollFrame", nil, container, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetAllPoints()
+    -- UIPanelScrollFrameTemplate hangs its bar OUTSIDE the frame on the right;
+    -- inset so the bar sits inside the panel instead of past its edge.
+    scrollFrame:SetPoint("TOPLEFT")
+    scrollFrame:SetPoint("BOTTOMRIGHT", -22, 0)
 
     local scrollChild = CreateFrame("Frame", nil, scrollFrame)
     scrollChild:SetWidth(container:GetWidth() or LIST_WIDTH)
@@ -894,12 +908,19 @@ end
 
 -- true = hide this item (known to be from an older expansion). Items whose data
 -- isn't loaded yet stay visible (and get requested) rather than vanishing.
+-- Items whose expansion wasn't known yet when the list was filtered. When their
+-- data loads, the browse list is re-filtered so old-expansion items drop out
+-- (before, they were kept and never re-checked -- the "Midnight only" box let
+-- every not-yet-cached old item through).
+local expansionPending = {}
+
 local function IsOldExpansionItem(itemID)
     if not CurrentExpansionOnly() then return false end
     local cur = LE_EXPANSION_LEVEL_CURRENT or (GetExpansionLevel and GetExpansionLevel())
     if not cur then return false end
     local expac = select(15, C_Item.GetItemInfo(itemID))
     if expac == nil then
+        expansionPending[itemID] = true
         if C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(itemID) end
         return false
     end
@@ -1085,13 +1106,16 @@ ShowConfirmBar = function(opts)
         bar._qtyLabel:Show()
         bar._qtyBox:Show()
         bar._qtyBox:SetText("1")
+        bar._confirmBtn._text:SetText("|cff00ff00Get Price|r")
+        -- Step 1 asks the server for the real total (a big quantity eats into
+        -- pricier listings); step 2 -- "Buy Now" in OnCommodityPriceUpdated -- pays.
         bar._confirmBtn:SetScript("OnClick", function()
             local qty = tonumber(bar._qtyBox:GetText()) or 1
             if qty < 1 then qty = 1 end
             if opts.itemID then
-                pendingCommodityPurchase = { itemID = opts.itemID, quantity = qty }
+                pendingCommodityPurchase = { itemID = opts.itemID, quantity = qty, name = opts.itemName }
                 C_AuctionHouse.StartCommoditiesPurchase(opts.itemID, qty)
-                bar._info:SetText("|cffffd700Purchasing...|r")
+                bar._info:SetText("|cffffd700Getting total price...|r")
                 bar._confirmBtn:Disable()
             end
         end)
@@ -1102,6 +1126,7 @@ ShowConfirmBar = function(opts)
             (buyoutSafe and VoidUI:FormatMoney(buyoutSafe) or "—"))
         bar._qtyLabel:Hide()
         bar._qtyBox:Hide()
+        bar._confirmBtn._text:SetText("|cff00ff00Confirm Buy|r")
         bar._confirmBtn:SetScript("OnClick", function()
             if opts.auctionID and buyoutSafe then
                 -- PlaceBid with bidAmount==buyout works for both bid-only and buyout listings.
@@ -1188,15 +1213,18 @@ PopulateBuyRow = function(row, listing, visualIndex)
     else
         -- Item listing
         local buyout = VoidUI.AH.SafeNum(listing.buyoutAmount)
-        local bid = VoidUI.AH.SafeNum(listing.bidAmount)
+        -- A bid must be at least minBid; the CURRENT bid (bidAmount) is rejected
+        -- as too low, which made bid-only listings unbuyable.
+        local bid = VoidUI.AH.SafeNum(listing.minBid)
         local price = buyout or bid
-        row._price:SetText(price and VoidUI:FormatMoney(price) or "N/A")
+        row._price:SetText(price and ((buyout and "" or "|cffaaaaaaBid|r ") .. VoidUI:FormatMoney(price)) or "N/A")
         row._market:SetText(BUY_TIME_LEFT[listing.timeLeft] or "")
         row._deal:SetText("")
-        row._extra:SetText("|cff00ff00[BUY]|r")
+        row._extra:SetText(listing.containsOwnerItem and "|cff888888[YOURS]|r"
+            or (buyout and "|cff00ff00[BUY]|r" or "|cffffd100[BID]|r"))
         row:SetScript("OnClick", function()
             if HandleRowModifiedClick(buyItemKey and buyItemKey.itemID) then return end
-            if not listing.auctionID then return end
+            if not listing.auctionID or listing.containsOwnerItem then return end
             local buyPrice = buyout or bid
             if not buyPrice then return end
             ShowConfirmBar({
@@ -1257,7 +1285,14 @@ local function PopulateBrowseRow(row, data, visualIndex)
     local mean = AH:GetMarketMean(data.itemID, 7)
     row._market:SetText(mean and VoidUI:FormatMoney(mean) or "")
 
-    local pct = AH:GetDealPercent(data.itemID)
+    -- Deal % = what's listed RIGHT NOW vs your 7-day market average. (It used
+    -- AH:GetDealPercent, which divides the stored price by the stored average --
+    -- both from the same scan data -- so every row read ~100%.)
+    local pct
+    local live = VoidUI.AH.SafeNum(data.minPrice)
+    if live and live > 0 and mean and mean > 0 then
+        pct = math.floor(live / mean * 100 + 0.5)
+    end
     if pct then
         local color = pct <= 80 and "|cff00ff00" or (pct <= 100 and "|cffffffff" or "|cffff4444")
         row._deal:SetText(color .. pct .. "%|r")
@@ -1693,6 +1728,12 @@ function BuildBrowseTab(parent)
 
     -- Cancel button
     local cancelBtn = CreateButton(confirmBar, 60, 26, "Cancel", function()
+        -- A started commodity purchase must be released server-side too, or a
+        -- late price event would still try to finish it.
+        if pendingCommodityPurchase then
+            pendingCommodityPurchase = nil
+            C_AuctionHouse.CancelCommoditiesPurchase()
+        end
         confirmBar:Hide()
     end)
     cancelBtn:SetPoint("LEFT", confirmBtn, "RIGHT", 6, 0)
@@ -1846,6 +1887,9 @@ end
 BuildSellableBagItems = function()
     wipe(sellBagItems)
     local hasUncached = false
+    -- Stackables (mats, flasks...) split across bag slots show as ONE row with the
+    -- bag total; the post uses GetAvailablePostCount so it sells all of them.
+    local stackRow = {}
     -- NOTE: Do NOT access _G.VoidBags or any external addon namespace here.
     -- Cross-addon table access can propagate taint into AH POST buttons.
     -- Trash detection is done entirely with inline heuristics below.
@@ -1858,8 +1902,13 @@ BuildSellableBagItems = function()
                 local loc = ItemLocation:CreateFromBagAndSlot(bag, slot)
                 if not C_Item.DoesItemExist(loc) then return end
                 if IsUnsellable(bag, slot) then return end
-                local name, _, quality, _, _, _, subClassName, _, _, icon, sellPrice, _, _, _, _, _, isCraftingReagent = C_Item.GetItemInfo(info.itemID)
+                local name, _, quality, _, _, _, subClassName, maxStack, _, icon, sellPrice, _, _, _, _, _, isCraftingReagent = C_Item.GetItemInfo(info.itemID)
                 if not name then hasUncached = true end
+                local merged = (maxStack or 1) > 1 and stackRow[info.itemID]
+                if merged then
+                    merged.count = merged.count + (info.stackCount or 1)
+                    return
+                end
                 local _, _, _, _, instIcon, classID = GetItemInfoInstant(info.itemID)
 
                 -- Section membership:
@@ -1909,7 +1958,7 @@ BuildSellableBagItems = function()
                     end
                 end
 
-                sellBagItems[#sellBagItems + 1] = {
+                local row = {
                     bag = bag,
                     slot = slot,
                     itemID = info.itemID,
@@ -1921,6 +1970,8 @@ BuildSellableBagItems = function()
                     section = section,
                     isProfitable = isProfitable,
                 }
+                sellBagItems[#sellBagItems + 1] = row
+                if (maxStack or 1) > 1 then stackRow[info.itemID] = row end
             end)
         end
     end
@@ -2289,8 +2340,10 @@ function BuildSellTab(parent)
 
     local dropLabel = itemFrame:CreateFontString(nil, "OVERLAY")
     VoidUI:SetFont(dropLabel, 11, "")
-    dropLabel:SetPoint("CENTER")
-    dropLabel:SetText("|cff555555Click an item in your bags to sell|r")
+    -- Sits where the item icon/name appear (the price row below is always
+    -- visible, so a CENTER anchor drew this text underneath the duration buttons).
+    dropLabel:SetPoint("TOP", 0, -28)
+    dropLabel:SetText("|cff555555Pick an item from the list or your bags to sell|r")
     parent._dropLabel = dropLabel
 
     -- Item icon + name
@@ -2384,7 +2437,7 @@ function BuildSellTab(parent)
         if not sellPending.itemID then return end
         local marketPrice = AH:GetPrice(sellPending.itemID)
         if not marketPrice or marketPrice <= 0 then return end
-        local newPrice = math.max(1, math.floor(marketPrice * (1 - pct / 100)))
+        local newPrice = ToSilver(marketPrice * (1 - pct / 100))
         parent._goldBox:SetText(tostring(math.floor(newPrice / 10000)))
         parent._silverBox:SetText(tostring(math.floor((newPrice % 10000) / 100)))
         parent._copperBox:SetText(tostring(newPrice % 100))
@@ -2402,10 +2455,13 @@ function BuildSellTab(parent)
 
     local durations = { { 12, "12h" }, { 24, "24h" }, { 48, "48h" } }
     local durButtons = {}
-    sellPending.duration = 2  -- index: 0=12h, 1=24h, 2=48h
+    -- Post* take duration as a luaIndex: 1=12h, 2=24h, 3=48h (Blizzard's sell
+    -- frame). Verified live 2026-10-23: the old 0-based "48h" (2) posted auctions
+    -- with 86,399s left = 24h. (Posts that failed that day were the copper bug.)
+    sellPending.duration = 3
     for di, d in ipairs(durations) do
         local dbtn = CreateButton(itemFrame, 50, 22, d[2], function()
-            sellPending.duration = di - 1
+            sellPending.duration = di
             for j, b in ipairs(durButtons) do
                 if j == di then
                     b._bg:SetColorTexture(0, 0.55, 0.55, 1)
@@ -2583,6 +2639,15 @@ function SellTab_SetItem(parent, itemLocation)
     local commodityStatus = C_AuctionHouse.GetItemCommodityStatus(itemLocation)
     local isCommodity = (commodityStatus == Enum.ItemCommodityStatus.Commodity)
 
+    -- Commodities (mats, flasks): default to everything in your bags, so a stack
+    -- split across slots posts in one go. NOT for single items (gear, decor):
+    -- PostItem with quantity > 1 starts Blizzard's multisell, which VoidAH doesn't
+    -- drive -- tested live 2026-10-23, the server silently posted nothing.
+    if isCommodity and C_AuctionHouse.GetAvailablePostCount then
+        local postable = C_AuctionHouse.GetAvailablePostCount(itemLocation)
+        if postable and postable > count then count = postable end
+    end
+
     -- Store pending
     sellPending.itemLocation = itemLocation
     sellPending.itemID = itemID
@@ -2598,7 +2663,8 @@ function SellTab_SetItem(parent, itemLocation)
             local status = C_AuctionHouse.GetItemCommodityStatus(itemLocation)
             sellPending.isCommodity = (status == Enum.ItemCommodityStatus.Commodity)
             local label = sellPending.isCommodity and "Commodity" or "Item"
-            parent._sellInfo:SetText(label .. " | Stack: " .. count)
+            sellPending._baseInfo = label .. " | Stack: " .. count
+            parent._sellInfo:SetText(sellPending._baseInfo)
         end)
     end
 
@@ -2607,7 +2673,8 @@ function SellTab_SetItem(parent, itemLocation)
     parent._sellIcon:SetTexture(itemTexture)
     parent._sellIcon:Show()
     parent._sellName:SetText(itemLink or itemName)
-    parent._sellInfo:SetText((isCommodity and "Commodity" or "Item") .. " | Stack: " .. count)
+    sellPending._baseInfo = (isCommodity and "Commodity" or "Item") .. " | Stack: " .. count
+    parent._sellInfo:SetText(sellPending._baseInfo)
     parent._qtyBox:SetText(tostring(count))
 
     -- Query current price
@@ -2620,10 +2687,10 @@ function SellTab_SetItem(parent, itemLocation)
         local cfg = VoidUI:GetModuleConfig("Auction")
         local pct = tonumber(cfg.undercutPercent)
         if pct and pct > 0 then
-            price = math.max(1, math.floor(price * (1 - pct / 100)))
+            price = ToSilver(price * (1 - pct / 100))
         else
             local undercut = cfg.undercutCopper or 100
-            price = math.max(1, price - undercut)
+            price = ToSilver(price - undercut)
         end
     end
     if price then
@@ -2682,7 +2749,10 @@ local function ShowPostConfirm(commodity, args, itemName)
 end
 
 function SellTab_PostAuction(parent)
-    if not sellPending.itemLocation then return end
+    if not sellPending.itemLocation then
+        print("|cffffaa00VoidUI AH|r: Pick an item to sell first (from the list or your bags).")
+        return
+    end
 
     if not C_Item.DoesItemExist(sellPending.itemLocation) then
         print("|cffff0000VoidUI AH|r: No item selected or item no longer exists.")
@@ -2700,11 +2770,17 @@ function SellTab_PostAuction(parent)
     end
 
     local qty = tonumber(parent._qtyBox:GetText()) or 1
-    local duration = sellPending.duration or 2
+    local duration = sellPending.duration or 3
     local itemName = C_Item.GetItemInfo(sellPending.itemID) or "?"
 
     local rawStatus = C_AuctionHouse.GetItemCommodityStatus(sellPending.itemLocation)
     local isCommodity = (rawStatus == 2 or sellPending.isCommodity)
+    if not isCommodity and qty > 1 then
+        -- Single items post one per click (see SellTab_SetItem); the Sell list
+        -- moves on to the next copy after each post.
+        qty = 1
+        parent._qtyBox:SetText("1")
+    end
 
     -- ONE post call per click, no pcall -- the same way Blizzard's sell frames do it.
     -- PostItem/PostCommodity return needsConfirmation, NOT success: false = posted
@@ -2728,11 +2804,22 @@ function SellTab_PostAuction(parent)
             ShowPostConfirm(true, args, itemName)
         end
     else
+        -- Same silver rule as commodities: a copper price here was silently
+        -- dropped -- every gear/decor post failed while commodities worked.
+        local itemPrice = ToSilver(totalPrice)
+        if itemPrice ~= totalPrice then
+            print(("|cffffaa00VoidUI AH|r: Price rounded to %s (the auction house only takes whole silver)."):format(
+                VoidUI:FormatMoney(itemPrice)))
+            totalPrice = itemPrice
+        end
         args = { sellPending.itemLocation, duration, qty, nil, totalPrice }
         if C_AuctionHouse.PostItem(args[1], args[2], args[3], nil, totalPrice) then
             ShowPostConfirm(false, args, itemName)
         end
     end
+
+    print(("|cff00ffffVoidUI AH|r: Posting %d x %s at %s each (%s)..."):format(
+        qty, itemName, VoidUI:FormatMoney(totalPrice), ({ "12h", "24h", "48h" })[duration] or tostring(duration)))
 
     -- Store pending post info for OnAuctionCreated to confirm
     sellPending._lastPostName = itemName
@@ -2790,7 +2877,10 @@ function BuildMyAuctionsTab(parent)
     listContainer:SetPoint("BOTTOMRIGHT", -10, 4)
 
     local scrollFrame = CreateFrame("ScrollFrame", "VoidUI_AuctionsScroll", listContainer, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetAllPoints()
+    -- UIPanelScrollFrameTemplate hangs its bar OUTSIDE the frame on the right;
+    -- inset so the bar sits inside the panel instead of past its edge.
+    scrollFrame:SetPoint("TOPLEFT")
+    scrollFrame:SetPoint("BOTTOMRIGHT", -22, 0)
 
     local scrollChild = CreateFrame("Frame", nil, scrollFrame)
     scrollChild:SetWidth(LIST_WIDTH - 20)
@@ -2826,21 +2916,23 @@ function BuildMyAuctionsTab(parent)
                 print("|cffff6060[VoidUI AH]|r No auction ID on this row.")
                 return
             end
-            -- Route through throttle queue. Rapid cancel clicks would otherwise
-            -- saturate the AH throttle bucket and silently drop after the first
-            -- few requests.
+            -- CancelAuction is HasRestrictions: it must run inside THIS click, like
+            -- Blizzard's cancel popup. The old throttle-queue route ran it later from
+            -- an event handler whenever anything was queued -> ADDON_ACTION_BLOCKED,
+            -- and the queue then waited forever for a throttle event that never came.
             local auctionID = row._auctionID
-            AH:_Enqueue(function()
-                local ok, err = pcall(C_AuctionHouse.CancelAuction, auctionID)
-                if not ok then
-                    print("|cffff6060[VoidUI AH]|r Cancel failed: " .. tostring(err))
-                    return
-                end
+            if C_AuctionHouse.IsThrottledMessageSystemReady
+               and not C_AuctionHouse.IsThrottledMessageSystemReady() then
+                print("|cffffaa00[VoidUI AH]|r Auction house is busy -- click Cancel again in a moment.")
+                return
+            end
+            do
+                C_AuctionHouse.CancelAuction(auctionID)
                 -- Cancel doesn't refresh the owned list on its own, so re-query (like the
                 -- post path does) so the cancelled row disappears right away instead of
                 -- needing a close/reopen. The re-query fires OWNED_AUCTIONS_UPDATED -> UpdateMyAuctions.
                 C_Timer.After(0.5, function() if AH.QueryOwnedAuctions then AH:QueryOwnedAuctions() end end)
-            end)
+            end
             print("|cff00ff00[VoidUI AH]|r Cancelling auction...")
         end)
         row._cancelBtn = cancelBtn
@@ -2883,21 +2975,23 @@ local function UpdateMyAuctions()
                 print("|cffff6060[VoidUI AH]|r No auction ID on this row.")
                 return
             end
-            -- Route through throttle queue. Rapid cancel clicks would otherwise
-            -- saturate the AH throttle bucket and silently drop after the first
-            -- few requests.
+            -- CancelAuction is HasRestrictions: it must run inside THIS click, like
+            -- Blizzard's cancel popup. The old throttle-queue route ran it later from
+            -- an event handler whenever anything was queued -> ADDON_ACTION_BLOCKED,
+            -- and the queue then waited forever for a throttle event that never came.
             local auctionID = row._auctionID
-            AH:_Enqueue(function()
-                local ok, err = pcall(C_AuctionHouse.CancelAuction, auctionID)
-                if not ok then
-                    print("|cffff6060[VoidUI AH]|r Cancel failed: " .. tostring(err))
-                    return
-                end
+            if C_AuctionHouse.IsThrottledMessageSystemReady
+               and not C_AuctionHouse.IsThrottledMessageSystemReady() then
+                print("|cffffaa00[VoidUI AH]|r Auction house is busy -- click Cancel again in a moment.")
+                return
+            end
+            do
+                C_AuctionHouse.CancelAuction(auctionID)
                 -- Cancel doesn't refresh the owned list on its own, so re-query (like the
                 -- post path does) so the cancelled row disappears right away instead of
                 -- needing a close/reopen. The re-query fires OWNED_AUCTIONS_UPDATED -> UpdateMyAuctions.
                 C_Timer.After(0.5, function() if AH.QueryOwnedAuctions then AH:QueryOwnedAuctions() end end)
-            end)
+            end
             print("|cff00ff00[VoidUI AH]|r Cancelling auction...")
         end)
         row._cancelBtn = cancelBtn
@@ -2935,7 +3029,11 @@ local function UpdateMyAuctions()
                 if qty > 1 and buyout then
                     perUnit = math.floor(buyout / qty)
                 end
-                if market and perUnit and market < perUnit then
+                local sold = Enum.AuctionStatus and auction.status == Enum.AuctionStatus.Sold
+                if sold then
+                    -- Sold, awaiting mail: no undercut verdict, nothing to cancel.
+                    row._deal:SetText("|cff00ff00Sold|r")
+                elseif market and perUnit and market < perUnit then
                     row._deal:SetText("|cffff4444UNDERCUT|r")
                 elseif market and perUnit and market == perUnit then
                     row._deal:SetText("|cffffaa00Matched|r")
@@ -2946,8 +3044,16 @@ local function UpdateMyAuctions()
                 -- timeLeft is Enum.AuctionHouseTimeLeftBand (0=Short..3=VeryLong).
                 -- Was reading `timeLeftSeconds and 3 or 0` (boolean coercion!) which
                 -- always showed Long/Short regardless of actual time remaining.
-                row._extra:SetText(timeLabels[auction.timeLeft or 0] or "")
-                if row._cancelBtn then row._cancelBtn:Show() end
+                -- Owned auctions come back with timeLeft = nil (seen live 12.1.5),
+                -- so every row read "Short". timeLeftSeconds is filled: show it.
+                local secs = VoidUI.AH.SafeNum(auction.timeLeftSeconds)
+                if secs and secs > 0 then
+                    row._extra:SetText(secs >= 3600 and (math.floor(secs / 3600) .. "h")
+                        or (math.max(1, math.floor(secs / 60)) .. "m"))
+                else
+                    row._extra:SetText(timeLabels[auction.timeLeft] or (sold and "" or "?"))
+                end
+                if row._cancelBtn then row._cancelBtn:SetShown(not sold) end
                 row:Show()
             else
                 row:Hide()
@@ -2986,7 +3092,7 @@ function BuildDealsTab(parent)
         { "Item", "LEFT", 4, 220 },
         { "Qty", "CENTER", 275, 40 },
         { "AH Price", "RIGHT", 320, 140 },
-        { "7d Mean", "RIGHT", 470, 120 },
+        { "7d Market", "RIGHT", 470, 120 },
         { "Deal %", "CENTER", 600, 60 },
         { "Savings", "RIGHT", 670, 100 },
     }
@@ -3005,7 +3111,10 @@ function BuildDealsTab(parent)
     listContainer:SetPoint("BOTTOMRIGHT", -10, 4)
 
     local scrollFrame = CreateFrame("ScrollFrame", "VoidUI_DealsScroll", listContainer, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetAllPoints()
+    -- UIPanelScrollFrameTemplate hangs its bar OUTSIDE the frame on the right;
+    -- inset so the bar sits inside the panel instead of past its edge.
+    scrollFrame:SetPoint("TOPLEFT")
+    scrollFrame:SetPoint("BOTTOMRIGHT", -22, 0)
 
     local scrollChild = CreateFrame("Frame", nil, scrollFrame)
     scrollChild:SetWidth(LIST_WIDTH - 20)
@@ -3037,8 +3146,8 @@ function FindDeals()
     for key, entry in pairs(db) do
         local itemID = tonumber(key)
         if itemID and entry.m and entry.m > 0 then
-            local mean = AH:GetMarketMean(itemID, 7)
-            if mean and mean > 0 then
+            local mean, nDays = AH:GetMarketMean(itemID, 7)
+            if mean and mean > 0 and nDays >= AH.MIN_DEAL_DAYS then
                 local pct = math.floor((entry.m / mean) * 100)
                 if pct <= threshold then
                     dealResults[#dealResults + 1] = {
@@ -3070,25 +3179,46 @@ function FindDeals()
         parent._rows[i] = row
     end
 
-    for i, row in ipairs(parent._rows) do
-        local data = dealResults[i]
-        if data then
-            local itemName, _, _, _, _, _, _, _, _, itemTexture = C_Item.GetItemInfo(data.itemID)
-            row._itemID = data.itemID
-            row._icon:SetTexture(itemTexture or 134400)
-            row._name:SetText(itemName or ("Item " .. data.itemID))
-            row._qty:SetText("")
-            row._price:SetText(VoidUI:FormatMoney(data.price))
-            row._market:SetText(VoidUI:FormatMoney(data.mean))
-            row._deal:SetText("|cff00ff00" .. data.pct .. "%|r")
-            row._extra:SetText("|cff00ff00-" .. VoidUI:FormatMoney(data.savings) .. "|r")
-            row:Show()
-        else
-            row:Hide()
+    local function PaintRows()
+        local uncached = false
+        for i, row in ipairs(parent._rows) do
+            local data = dealResults[i]
+            if data then
+                local itemName, _, _, _, _, _, _, _, _, itemTexture = C_Item.GetItemInfo(data.itemID)
+                if not itemName then
+                    uncached = true
+                    C_Item.RequestLoadItemDataByID(data.itemID)
+                end
+                row._itemID = data.itemID
+                row._icon:SetTexture(itemTexture or select(5, GetItemInfoInstant(data.itemID)) or 134400)
+                row._name:SetText(itemName or ("Item " .. data.itemID))
+                row._qty:SetText("")
+                row._price:SetText(VoidUI:FormatMoney(data.price))
+                row._market:SetText(VoidUI:FormatMoney(data.mean))
+                row._deal:SetText("|cff00ff00" .. data.pct .. "%|r")
+                -- Positive "you save X" (a leading "-" read as a loss next to a green %).
+                row._extra:SetText("|cff00ff00" .. VoidUI:FormatMoney(data.savings) .. "|r")
+                -- Click = open this item's listings in Browse.
+                row._itemKey = C_AuctionHouse.MakeItemKey(data.itemID)
+                row:SetScript("OnClick", function(self)
+                    SetActiveTab(1)
+                    BrowseRowOnClick(self)
+                end)
+                row:Show()
+            else
+                row:Hide()
+            end
         end
+        return uncached
+    end
+    -- Names not cached yet showed as "Item 266384" with a ? icon: request them
+    -- and repaint once they've had a moment to load.
+    if PaintRows() then
+        C_Timer.After(1, function() if parent:IsVisible() then PaintRows() end end)
     end
 
-    print("|cff00ffffVoidUI AH|r: Found " .. #dealResults .. " deals at <=" .. threshold .. "% of market.")
+    print("|cff00ffffVoidUI AH|r: Found " .. #dealResults .. " deals at <=" .. threshold .. "% of market." ..
+        (#dealResults == 0 and (" (Items need " .. AH.MIN_DEAL_DAYS .. " days of scans to judge a deal.)") or ""))
 end
 
 ----------------------------------------------------------------------
@@ -3353,7 +3483,7 @@ ScanTrashItems = function()
         AH:_Enqueue(function()
             local itemKey = C_AuctionHouse.MakeItemKey(itemID)
             if itemKey then
-                C_AuctionHouse.SendSearchQuery(itemKey, {}, false)
+                C_AuctionHouse.SendSearchQuery(itemKey, PRICE_SORT, false)
             end
         end)
     end
@@ -3412,7 +3542,10 @@ function StartShoppingListScan()
     if not cfg.shopAlertOnOpen then return end
     local list = cfg.shoppingList
     if not list or #list == 0 then return end
-    if AH.scanning then return end  -- don't interfere with full/browse scans
+    -- Only a BROWSE scan competes for search queries. A full scan (ReplicateItems)
+    -- doesn't, and the stale auto-scan starts 1s before this runs -- gating on any
+    -- scan meant shopping alerts never fired on the first visit after 12h.
+    if AH.scanning and AH.scanType == "browse" then return end
 
     wipe(shopQueryPending)
     wipe(shopAlertResults)
@@ -3426,7 +3559,7 @@ function StartShoppingListScan()
             AH:_Enqueue(function()
                 local itemKey = C_AuctionHouse.MakeItemKey(entry.itemID)
                 if itemKey then
-                    C_AuctionHouse.SendSearchQuery(itemKey, {}, false)
+                    C_AuctionHouse.SendSearchQuery(itemKey, PRICE_SORT, false)
                 end
             end)
         end
@@ -3597,7 +3730,10 @@ local function UpdateScanProgress()
     end
 
     -- Cooldown display
-    if AH:CanFullScan() then
+    if AH.scanning and AH.scanType == "full" then
+        parent._fullCooldown:SetText((AH.scanTotal or 0) == 0
+            and "|cffffd100Waiting for Blizzard...|r" or "|cffffd100Scanning...|r")
+    elseif AH:CanFullScan() then
         parent._fullCooldown:SetText("|cff00ff00Ready|r")
     else
         parent._fullCooldown:SetText("|cffff4444Cooldown: " .. VoidUI:FormatTime(AH:FullScanCooldownLeft()) .. "|r")
@@ -3697,6 +3833,25 @@ function AH:OnAHClose()
     UpdateStatusBar()
 end
 
+-- Live lowest price arrived for the item on the Sell tab: price it with the same
+-- % undercut SellTab_SetItem uses (the old path used the legacy flat 1s undercut,
+-- silently replacing the % price) and rebuild the info line instead of appending.
+function ApplySellLivePrice(parent, perUnit)
+    local cfg = VoidUI:GetModuleConfig("Auction")
+    local pct = tonumber(cfg.undercutPercent)
+    local price
+    if pct and pct > 0 then
+        price = ToSilver(perUnit * (1 - pct / 100))
+    else
+        price = ToSilver(perUnit - (cfg.undercutCopper or 100))
+    end
+    parent._goldBox:SetText(tostring(math.floor(price / 10000)))
+    parent._silverBox:SetText(tostring(math.floor((price % 10000) / 100)))
+    parent._copperBox:SetText(tostring(price % 100))
+    parent._sellInfo:SetText((sellPending._baseInfo or "") ..
+        " | |cff00ff00Current: " .. VoidUI:FormatMoney(perUnit) .. "|r")
+end
+
 function AH:OnItemSearchResults(itemKey)
     -- Trash scan routing: always check first so the price DB updates even
     -- if this result was also interesting to another flow.
@@ -3754,6 +3909,7 @@ function AH:OnItemSearchResults(itemKey)
                     auctionID = r.auctionID,
                     buyoutAmount = VoidUI.AH.SafeNum(r.buyoutAmount),
                     bidAmount = VoidUI.AH.SafeNum(r.bidAmount),
+                    minBid = VoidUI.AH.SafeNum(r.minBid),
                     quantity = VoidUI.AH.SafeNum(r.quantity) or 1,
                     itemKey = r.itemKey,
                     owners = r.owners or {},
@@ -3768,9 +3924,10 @@ function AH:OnItemSearchResults(itemKey)
         -- Don't return — also let sell tab update if applicable
     end
 
-    -- Update sell tab with results
+    -- Update sell tab with results -- only for the item being sold (every trash-
+    -- scan / buy-list result used to re-price it and clobber a typed price).
     if not tabFrames or not tabFrames[2] then return end
-    if not sellPending.itemID then return end
+    if not sellPending.itemID or not itemKey or itemKey.itemID ~= sellPending.itemID then return end
 
     -- Get search results for the pending item
     local searchItemKey = C_AuctionHouse.MakeItemKey(sellPending.itemID)
@@ -3784,16 +3941,7 @@ function AH:OnItemSearchResults(itemKey)
             local qty = VoidUI.AH.SafeNum(result.quantity) or 1
             local perUnit = (qty > 1) and math.floor(buyout / qty) or buyout
             AH:SetPrice(sellPending.itemID, perUnit)
-
-            -- Update sell price with undercut
-            local cfg = VoidUI:GetModuleConfig("Auction")
-            local undercut = cfg.undercutCopper or 100
-            local price = math.max(1, perUnit - undercut)
-            local parent = tabFrames[2]
-            parent._goldBox:SetText(tostring(math.floor(price / 10000)))
-            parent._silverBox:SetText(tostring(math.floor((price % 10000) / 100)))
-            parent._copperBox:SetText(tostring(price % 100))
-            parent._sellInfo:SetText(parent._sellInfo:GetText() .. " | |cff00ff00Current: " .. VoidUI:FormatMoney(perUnit) .. "|r")
+            ApplySellLivePrice(tabFrames[2], perUnit)
         end
     end
 end
@@ -3860,14 +4008,7 @@ function AH:OnCommoditySearchResults(itemID)
         if unitPrice then
             AH:SetPrice(itemID, unitPrice)
 
-            local cfg = VoidUI:GetModuleConfig("Auction")
-            local undercut = cfg.undercutCopper or 100
-            local price = math.max(1, unitPrice - undercut)
-            local parent = tabFrames[2]
-            parent._goldBox:SetText(tostring(math.floor(price / 10000)))
-            parent._silverBox:SetText(tostring(math.floor((price % 10000) / 100)))
-            parent._copperBox:SetText(tostring(price % 100))
-            parent._sellInfo:SetText(parent._sellInfo:GetText() .. " | |cff00ff00Current: " .. VoidUI:FormatMoney(unitPrice) .. "|r")
+            ApplySellLivePrice(tabFrames[2], unitPrice)
         end
     end
 end
@@ -3931,13 +4072,35 @@ end
 ----------------------------------------------------------------------
 -- Commodity Purchase Callbacks
 ----------------------------------------------------------------------
+-- The server's real quote for the started purchase. Never auto-confirm: the
+-- player only saw the cheapest unit price, and a large quantity climbs into
+-- pricier listings. Show the total and let "Buy Now" pay (Blizzard's buy dialog
+-- does the same two-step).
 function AH:OnCommodityPriceUpdated(unitPrice, totalPrice)
+    local p = pendingCommodityPurchase
+    if not p then return end
+    local bar = tabFrames and tabFrames[1] and tabFrames[1]._confirmBar
+    if not bar then return end
+    local total, unit = VoidUI.AH.SafeNum(totalPrice), VoidUI.AH.SafeNum(unitPrice)
+    bar._info:SetText(("|cff00c7ff%d x %s|r  —  |cffffffff%s|r%s"):format(
+        p.quantity, p.name or "item",
+        total and VoidUI:FormatMoney(total) or "?",
+        unit and ("  (avg " .. VoidUI:FormatMoney(unit) .. ")") or ""))
+    bar._confirmBtn._text:SetText("|cff00ff00Buy Now|r")
+    bar._confirmBtn:SetScript("OnClick", function()
+        if pendingCommodityPurchase ~= p then return end
+        C_AuctionHouse.ConfirmCommoditiesPurchase(p.itemID, p.quantity)
+        bar._info:SetText("|cffffd700Purchasing...|r")
+        bar._confirmBtn:Disable()
+    end)
+    bar._confirmBtn:Enable()
+end
+
+function AH:OnCommodityPriceUnavailable()
     if not pendingCommodityPurchase then return end
-    -- Auto-confirm: user already confirmed via inline bar, just finalize
-    C_AuctionHouse.ConfirmCommoditiesPurchase(
-        pendingCommodityPurchase.itemID, pendingCommodityPurchase.quantity)
-    print("|cff00ff00[VoidUI AH]|r Confirming purchase... (" ..
-        VoidUI:FormatMoney(totalPrice or 0) .. ")")
+    pendingCommodityPurchase = nil
+    HideConfirmBar()
+    print("|cffff4444[VoidUI AH]|r Not enough listed at that price any more -- try a smaller quantity.")
 end
 
 function AH:OnCommodityPurchaseSucceeded()
@@ -4030,11 +4193,29 @@ browseEventFrame:RegisterEvent("ITEM_DATA_LOAD_RESULT")
 browseEventFrame:RegisterEvent("BAG_UPDATE")
 browseEventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "AUCTION_HOUSE_BROWSE_RESULTS_UPDATED" then
-        if not AH.scanning and panel and panel:IsShown() and activeTab == 1 and browseView == BROWSE_VIEW_RESULTS then
+        -- Only a BROWSE scan owns these results. A full price scan (ReplicateItems, which
+        -- 1.2.11 starts in the background when prices are stale) must not hide what the
+        -- player searches for -- it did, so Browse showed nothing until the scan ended.
+        local browseScanRunning = AH.scanning and AH.scanType == "browse"
+        if not browseScanRunning and panel and panel:IsShown() and activeTab == 1 and browseView == BROWSE_VIEW_RESULTS then
             UpdateBrowseResults()
         end
     elseif event == "ITEM_DATA_LOAD_RESULT" then
         local itemID, success = ...
+        -- Expansion now known for an item the filter had to keep: re-filter once
+        -- (coalesced), so old-expansion items drop out of the list.
+        if success and expansionPending[itemID] then
+            expansionPending[itemID] = nil
+            if not pendingRefilter then
+                pendingRefilter = true
+                C_Timer.After(0.3, function()
+                    pendingRefilter = false
+                    if browseView == BROWSE_VIEW_RESULTS and panel and panel:IsShown() and activeTab == 1 then
+                        UpdateBrowseResults()
+                    end
+                end)
+            end
+        end
         if success and pendingItems[itemID] then
             pendingItems[itemID] = nil
             -- Cache base ilvl (fallback for commodities with no itemKey.itemLevel)
@@ -4126,13 +4307,13 @@ function BuildProfessionsTab(parent)
     local title = parent:CreateFontString(nil, "OVERLAY")
     VoidUI:SetFont(title, 13, "OUTLINE")
     title:SetPoint("TOPLEFT", 16, -14)
-    title:SetText("|cff00c7ffProfession Leveling Plans|r — ★ = your active profession")
+    title:SetText("|cff00c7ffProfession Leveling Plans|r — |A:auctionhouse-icon-favorite:12:12|a = your active profession")
 
     local subtitle = parent:CreateFontString(nil, "OVERLAY")
     VoidUI:SetFont(subtitle, 9, "")
     subtitle:SetPoint("TOPLEFT", 16, -32)
     subtitle:SetTextColor(0.55, 0.55, 0.6)
-    subtitle:SetText("Data from wow-professions.com (Midnight 12.0.5). Click a row to search the AH or add to your Shopping List.")
+    subtitle:SetText("Data from wow-professions.com (checked for 12.1.5). Click a row to search the AH or add to your Shopping List.")
 
     local leftPane = CreateFrame("Frame", nil, parent, "BackdropTemplate")
     leftPane:SetPoint("TOPLEFT", 16, -56)
@@ -4155,7 +4336,7 @@ function BuildProfessionsTab(parent)
     local planTitle = rightPane:CreateFontString(nil, "OVERLAY")
     VoidUI:SetFont(planTitle, 12, "OUTLINE")
     planTitle:SetPoint("TOPLEFT", 12, -10)
-    planTitle:SetText("|cffaaaaaaSelect a profession ←|r")
+    planTitle:SetText("|cffaaaaaaSelect a profession on the left|r")
 
     -- planNotes lives inside its own container so we can size it dynamically.
     local notesHolder = CreateFrame("Frame", nil, rightPane)
@@ -4200,7 +4381,7 @@ function BuildProfessionsTab(parent)
     local function RenderMatRows(plan)
         for _, row in ipairs(parent._matRows) do row:Hide() end
         if not plan then
-            planTitle:SetText("|cffaaaaaaSelect a profession ←|r")
+            planTitle:SetText("|cffaaaaaaSelect a profession on the left|r")
             planNotes:SetText("")
             addAllBtn:Disable(); addAllBtn:SetAlpha(0.5)
             searchAllBtn:Disable(); searchAllBtn:SetAlpha(0.5)
@@ -4219,11 +4400,14 @@ function BuildProfessionsTab(parent)
         end
 
         local skillSuffix = profInfo and string.format("  |cffffffffYour skill: %d / %d|r", rank, maxRank) or "  |cff888888(not learned)|r"
-        local star = profInfo and "|cffffd200★|r " or ""
+        local star = profInfo and "|A:auctionhouse-icon-favorite:12:12|a " or ""
         local cacheNote = ""
         if cache then
-            local mins = math.max(1, math.floor((time() - (cache.lastSync or 0)) / 60))
-            cacheNote = string.format("  |cff00ff00[%d recipes synced %dm ago]|r", cache.learnedCount or 0, mins)
+            local sec = math.max(60, time() - (cache.lastSync or 0))
+            local ago = sec < 3600 and (math.floor(sec / 60) .. "m")
+                or sec < 86400 and (math.floor(sec / 3600) .. "h")
+                or (math.floor(sec / 86400) .. "d")
+            cacheNote = string.format("  |cff00ff00[%d recipes synced %s ago]|r", cache.learnedCount or 0, ago)
         else
             cacheNote = "  |cffff8800[open profession window to sync]|r"
         end
@@ -4242,18 +4426,19 @@ function BuildProfessionsTab(parent)
             notesTxt = notesTxt .. "\n|cffffd200Recipe Path:|r"
             for _, step in ipairs(plan.steps) do
                 local stepSrc = step.source or plan.trainer or "trainer"
-                local rangeStr = step.startSkill .. " → " .. step.endSkill
+                local rangeStr = step.startSkill .. "-" .. step.endSkill
 
                 -- Step status vs player skill
                 local statusIcon, statusColor
                 if rank >= step.endSkill then
-                    statusIcon = "|cff00ff00✓|r"
+                    statusIcon = "|A:common-icon-checkmark:12:12|a"
                     statusColor = "|cff666666"  -- dim past steps
                 elseif rank >= step.startSkill then
-                    statusIcon = "|cffffd200▶|r"
+                    -- Plain ASCII: the UI font has no ▶/○ glyphs (drew as boxes).
+                    statusIcon = "|cffffd200>|r"
                     statusColor = "|cffffffff"  -- bright current step
                 else
-                    statusIcon = "|cff888888○|r"
+                    statusIcon = "|cff888888-|r"
                     statusColor = "|cffaaaaaa"  -- normal future step
                 end
 
@@ -4411,7 +4596,7 @@ function BuildProfessionsTab(parent)
         lbl:SetPoint("RIGHT", -8, 0)
         lbl:SetJustifyH("LEFT")
         lbl:SetWordWrap(false)
-        local star = isActive and "|cffffd200★|r " or "|cff555555○|r "
+        local star = isActive and "|A:auctionhouse-icon-favorite:12:12|a " or "      "
         lbl:SetText(star .. plan.name)
         lbl:SetTextColor(isActive and 1 or 0.7, isActive and 1 or 0.7, isActive and 1 or 0.75)
 

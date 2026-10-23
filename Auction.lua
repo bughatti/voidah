@@ -151,18 +151,28 @@ function AH:GetMarketMean(itemID, days)
     local entry = db[tostring(itemID)]
     if not entry or not entry.h then return nil end
 
+    -- MEDIAN of the daily lows, not the average: one day with a troll/sole
+    -- listing (seen live: Skinning Knife 765g one day, 1g the next) dragged the
+    -- average up 100x and turned 1,245 items into fake "0%" deals. With only two
+    -- days there's no middle, so take the lower one (never invents a deal).
+    -- Second return = how many days of data back it; callers that flag deals
+    -- should want >= 3.
     local today = math.floor(time() / DAY_SECONDS)
-    local total, count = 0, 0
+    local lows = {}
     for i = 0, days - 1 do
-        local day = tostring(today - i)
-        if entry.h[day] then
-            total = total + entry.h[day][1]  -- use low price
-            count = count + 1
-        end
+        local hist = entry.h[tostring(today - i)]
+        if hist then lows[#lows + 1] = hist[1] end  -- use low price
     end
-    if count == 0 then return entry.m end  -- fallback to last known
-    return math.floor(total / count)
+    local n = #lows
+    if n == 0 then return entry.m, 0 end  -- fallback to last known
+    table.sort(lows)
+    if n == 2 then return lows[1], 2 end
+    if n % 2 == 1 then return lows[(n + 1) / 2], n end
+    return math.floor((lows[n / 2] + lows[n / 2 + 1]) / 2), n
 end
+
+-- Days of history required before an item can be called a deal.
+AH.MIN_DEAL_DAYS = 3
 
 function AH:GetHistory(itemID)
     local db = GetRealmDB()
@@ -188,12 +198,22 @@ function AH:GetLastBrowseScan()
     return VoidUIAuctionDB._lastBrowseScan or 0
 end
 
+-- Blizzard serves ReplicateItems (the full AH list) once per 15 min. A request
+-- made inside that window is silently ignored, so the cooldown has to run from
+-- the last REQUEST -- including scans that were aborted (AH closed / reload) --
+-- not just the last finished scan. Otherwise a re-open asks again, nothing ever
+-- arrives, and the scan hangs at 0% (0/0) forever.
+local function LastReplicateRequest()
+    return (VoidUIAuctionDB and VoidUIAuctionDB._lastReplicateCall) or 0
+end
+
 function AH:CanFullScan()
-    return (time() - self:GetLastFullScan()) >= FULL_SCAN_COOLDOWN
+    local since = time() - math.max(self:GetLastFullScan(), LastReplicateRequest())
+    return since >= FULL_SCAN_COOLDOWN
 end
 
 function AH:FullScanCooldownLeft()
-    local elapsed = time() - self:GetLastFullScan()
+    local elapsed = time() - math.max(self:GetLastFullScan(), LastReplicateRequest())
     return math.max(0, FULL_SCAN_COOLDOWN - elapsed)
 end
 
@@ -210,8 +230,16 @@ function AH:_TryDequeue()
     -- the C-stack. Each successful dequeue sets throttleReady=false and
     -- breaks out; the throttle event flips it back to true.
     while throttleReady and #throttleQueue > 0 do
+        -- Our flag is only a guess: our own Post/Bid calls and Blizzard's hidden
+        -- AH frame share the server throttle. Ask the real one first; if it's
+        -- busy, AUCTION_HOUSE_THROTTLED_SYSTEM_READY will call us back.
+        if C_AuctionHouse.IsThrottledMessageSystemReady
+           and not C_AuctionHouse.IsThrottledMessageSystemReady() then
+            break
+        end
         throttleReady = false
         local func = table.remove(throttleQueue, 1)
+        self._inFlight = func
         local ok, err = pcall(func)
         if not ok then
             print("|cffff0000VoidUI AH|r: Throttle error: " .. tostring(err))
@@ -231,8 +259,17 @@ end
 -- Throttle-drop event handlers. Without these, queries silently disappear
 -- when the AH throttle buffer fills (e.g., full scan + shopping scan overlap).
 function AH:_OnThrottleDropped()
-    -- The previously-dispatched query was dropped server-side. Re-flag ready
-    -- so the next dequeue can fire and re-attempt.
+    -- The previously-dispatched query was dropped server-side. Put it back at
+    -- the front (up to 3 tries) -- moving on lost it for good, leaving buy
+    -- listings stuck on "Loading..." and sell prices that never arrived.
+    local func = self._inFlight
+    self._inFlight = nil
+    if func then
+        self._dropRetries = self._dropRetries or setmetatable({}, { __mode = "k" })
+        local n = (self._dropRetries[func] or 0) + 1
+        self._dropRetries[func] = n
+        if n <= 3 then table.insert(throttleQueue, 1, func) end
+    end
     throttleReady = true
     self:_TryDequeue()
 end
@@ -276,11 +313,25 @@ function AH:StartFullScan()
     self._scanMin = {}   -- this scan's lowest per-unit buyout per item (applied at finish)
 
     self:_Enqueue(function()
+        VoidUIAuctionDB._lastReplicateCall = time()
         C_AuctionHouse.ReplicateItems()
         -- ReplicateItems does NOT use a throttle slot or fire
         -- _SYSTEM_READY. Without this, any work queued after it would
         -- sit dead until the full scan completed (~minutes).
         throttleReady = true
+        -- Watchdog: if Blizzard never answers (request inside its 15-min window,
+        -- or the AH hiccuped), give up cleanly instead of hanging at 0% forever
+        -- with AH.scanning blocking everything that waits on it.
+        C_Timer.After(60, function()
+            if self.scanning and self.scanType == "full" and (self.scanTotal or 0) == 0
+               and not self._processingBatch then
+                self.scanning = false
+                self.scanType = nil
+                self._scanMin = nil
+                print("|cff00ffffVoidUI AH|r: Full scan got no data from Blizzard (it allows one every 15 min). Try again later.")
+                if AH.OnScanComplete then SafeCall(AH.OnScanComplete, AH, "full") end
+            end
+        end)
     end)
 
     if AH.OnScanStart then SafeCall(AH.OnScanStart, AH, "full") end
@@ -480,7 +531,10 @@ function AH:QueryItemPrice(itemID)
     -- (function exists but doesn't deliver to our sell-tab handler).
     -- SendSearchQuery is the proven-working call for this flow.
     self:_Enqueue(function()
-        C_AuctionHouse.SendSearchQuery(itemKey, {}, false)
+        -- Price sort: item (non-commodity) results aren't price-ordered by default,
+        -- and the reader takes result #1 as the lowest.
+        C_AuctionHouse.SendSearchQuery(itemKey,
+            {{ sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort = false }}, false)
     end)
 end
 
@@ -515,8 +569,8 @@ end
 ----------------------------------------------------------------------
 function AH:GetDealPercent(itemID)
     local price = self:GetPrice(itemID)
-    local mean = self:GetMarketMean(itemID, 7)
-    if not price or not mean or mean == 0 then return nil end
+    local mean, nDays = self:GetMarketMean(itemID, 7)
+    if not price or not mean or mean == 0 or nDays < self.MIN_DEAL_DAYS then return nil end
     return math.floor((price / mean) * 100)
 end
 
@@ -559,7 +613,11 @@ function mod:Init()
     eventFrame:RegisterEvent("OWNED_AUCTIONS_UPDATED")
     eventFrame:RegisterEvent("AUCTION_HOUSE_AUCTION_CREATED")
     eventFrame:RegisterEvent("COMMODITY_PRICE_UPDATED")
-    eventFrame:RegisterEvent("COMMODITY_PURCHASED")
+    eventFrame:RegisterEvent("COMMODITY_PRICE_UNAVAILABLE")
+    -- The server's reasons a post/buy/cancel failed. Blizzard's (hidden) AH frame
+    -- shows these as mid-screen red text that's easy to miss; echo them to chat.
+    eventFrame:RegisterEvent("AUCTION_HOUSE_SHOW_ERROR")
+    eventFrame:RegisterEvent("AUCTION_HOUSE_POST_ERROR")
     eventFrame:RegisterEvent("COMMODITY_PURCHASE_SUCCEEDED")
     eventFrame:RegisterEvent("COMMODITY_PURCHASE_FAILED")
     -- Throttle backpressure events — without these, dropped queries
@@ -641,11 +699,22 @@ function mod:OnEvent(event, ...)
     elseif event == "COMMODITY_PRICE_UPDATED" then
         if AH.OnCommodityPriceUpdated then AH:OnCommodityPriceUpdated(...) end
 
-    elseif event == "COMMODITY_PURCHASED" then
-        if AH.OnCommodityPurchaseSucceeded then AH:OnCommodityPurchaseSucceeded() end
+    elseif event == "AUCTION_HOUSE_SHOW_ERROR" then
+        local err = ...
+        local text = AuctionHouseUtil and AuctionHouseUtil.GetErrorText
+            and AuctionHouseUtil.GetErrorText(err) or ("error " .. tostring(err))
+        print("|cffff4444VoidUI AH|r: The auction house said: " .. tostring(text))
+
+    elseif event == "AUCTION_HOUSE_POST_ERROR" then
+        print("|cffff4444VoidUI AH|r: The auction house rejected that post" ..
+            (AUCTION_POSTING_ERROR_TEXT and (": " .. AUCTION_POSTING_ERROR_TEXT) or "."))
+
+    elseif event == "COMMODITY_PRICE_UNAVAILABLE" then
+        if AH.OnCommodityPriceUnavailable then AH:OnCommodityPriceUnavailable() end
 
     elseif event == "COMMODITY_PURCHASE_SUCCEEDED" then
-        -- Modern partial-fill-aware success event (paired with COMMODITY_PURCHASE_FAILED).
+        -- The one success event Blizzard's buy frames use. COMMODITY_PURCHASED also
+        -- fires on the same buy, so handling both printed/refreshed twice.
         if AH.OnCommodityPurchaseSucceeded then AH:OnCommodityPurchaseSucceeded() end
 
     elseif event == "COMMODITY_PURCHASE_FAILED" then
