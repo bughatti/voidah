@@ -218,6 +218,8 @@ end
 -- their definition but must be visible as upvalues
 local RefreshBrowseRows
 local SortBrowseResults
+local UpdateBrowseResults   -- re-filter loaded results (filters menu, max price)
+local filtersDirty          -- filters changed while viewing listings: "client" | "server", applied on Back
 local SendCategoryBrowseQuery
 local BuildSellableBagItems
 local RefreshSellItemList
@@ -398,6 +400,7 @@ end
 
 local function PopulateTreeRow(row, entry, visualIndex)
     if not entry then row:Hide() return end
+    if row._upArrow then row._upArrow:Hide() end
     row._itemID = nil
     row._treeEntry = entry
     row._icon:SetTexture(nil)
@@ -595,6 +598,13 @@ local function CreateItemRow(parent, index)
     icon:SetPoint("LEFT", 4, 0)
     icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
     row._icon = icon
+    -- green "upgrade" arrow on the icon (Browse results only; hidden in other views)
+    local up = row:CreateTexture(nil, "OVERLAY")
+    up:SetAtlas("bags-greenarrow")
+    up:SetSize(14, 14)
+    up:SetPoint("BOTTOMRIGHT", icon, "BOTTOMRIGHT", 4, -3)
+    up:Hide()
+    row._upArrow = up
 
     -- Name
     local name = row:CreateFontString(nil, "OVERLAY")
@@ -898,12 +908,263 @@ end
 -- ring enchants were listed -- while expansionID was right (Amani Mastery = 11,
 -- older ring enchants 5-8).
 ----------------------------------------------------------------------
+-- Below max level the filter is off whatever the checkbox says: a leveling character
+-- (often in Chromie Time) needs older-expansion gear, and with "Usable only" on the two
+-- filters left nothing (a level-58 rogue got zero daggers, 2026-10-24).
+local function IsLeveling()
+    local maxLvl = GetMaxLevelForPlayerExpansion and GetMaxLevelForPlayerExpansion()
+    return maxLvl and (UnitLevel("player") or 0) < maxLvl
+end
+
 local function CurrentExpansionOnly()
+    if IsLeveling() then return false end
     return not (VoidUIAuctionDB and VoidUIAuctionDB.currentExpansionOnly == false)
 end
 
+-- "Usable only" (Browse tab checkbox, off by default): hide items your character can't
+-- use (class/armor/weapon type, required level). Filtered CLIENT-SIDE in
+-- UpdateBrowseResults -- Blizzard's server-side Enum.AuctionHouseFilter.UsableOnly
+-- returned nothing at all (level-58 rogue, Weapons > Daggers, 2026-10-24), the same
+-- way its CurrentExpansionOnly filter did.
+local function UsableOnly()
+    return VoidUIAuctionDB and VoidUIAuctionDB.usableOnly == true
+end
+
+-- Items whose data wasn't loaded when a client-side filter ran (expansion, stat, usable):
+-- re-filtered when it loads (ITEM_DATA_LOAD_RESULT).
+local expansionPending = {}
+
+local function AuctionDB()
+    VoidUIAuctionDB = VoidUIAuctionDB or {}
+    return VoidUIAuctionDB
+end
+
+-- Item quality filters. Blizzard's search treats the quality flags as filters too and
+-- its own default turns ALL of them on: a query that sends some other flag (Usable,
+-- Upgrades...) without the qualities matches nothing -- that's why UsableOnly and
+-- CurrentExpansionOnly looked broken before (2026-10-24). So qualities always go out.
+local QUALITY_FILTERS = {
+    { key = "PoorQuality", q = 0 }, { key = "CommonQuality", q = 1 }, { key = "UncommonQuality", q = 2 },
+    { key = "RareQuality", q = 3 }, { key = "EpicQuality", q = 4 }, { key = "LegendaryQuality", q = 5 },
+    { key = "ArtifactQuality", q = 6 },
+}
+local function QualityOn(key)
+    local off = VoidUIAuctionDB and VoidUIAuctionDB.qualityOff
+    return not (off and off[key])
+end
+
+-- Server-side filters (Blizzard does these): qualities + Upgrades / Uncollected.
+-- Usable, expansion, primary stat and price are filtered here (UpdateBrowseResults).
 local function BrowseFilters()
-    return {}
+    local out, E = {}, Enum.AuctionHouseFilter
+    if not E then return out end
+    for _, qf in ipairs(QUALITY_FILTERS) do
+        if E[qf.key] and QualityOn(qf.key) then out[#out + 1] = E[qf.key] end
+    end
+    local db = VoidUIAuctionDB or {}
+    if db.upgradesOnly and E.UpgradesOnly then out[#out + 1] = E.UpgradesOnly end
+    if db.uncollectedOnly and E.UncollectedOnly then out[#out + 1] = E.UncollectedOnly end
+    return out
+end
+
+-- Primary-stat filter: "any" | "spec" | "AGI" | "STR" | "INT".
+local STAT_WORD = { AGI = "AGILITY", STR = "STRENGTH", INT = "INTELLECT" }
+local STAT_NAMES = { AGI = "Agility", STR = "Strength", INT = "Intellect" }
+local SPEC_PRIMARY = { [1] = "STR", [2] = "AGI", [4] = "INT" }   -- GetSpecializationInfo's primaryStat
+-- Current spec: (specID, primaryStat) from GetSpecializationInfo.
+local function SpecInfo()
+    local CS = C_SpecializationInfo
+    local getSpec = (CS and CS.GetSpecialization) or GetSpecialization
+    local getInfo = (CS and CS.GetSpecializationInfo) or GetSpecializationInfo
+    local i = getSpec and getSpec()
+    if not (i and getInfo) then return nil end
+    local id, _, _, _, _, primary = getInfo(i)
+    return id, primary
+end
+local function SpecStat()
+    local _, primary = SpecInfo()
+    return SPEC_PRIMARY[primary]
+end
+local function WantedStat()
+    local s = VoidUIAuctionDB and VoidUIAuctionDB.statFilter or "any"
+    if s == "spec" then return SpecStat() end
+    if STAT_WORD[s] then return s end
+end
+
+-- Does an item carry a primary stat other than `want`? Items with no primary stat
+-- (rings, necks, most trinkets) never count as wrong. nil = item data not loaded yet.
+-- An item's stat table (C_Item.GetItemStats keys), {} if it has none, nil if its data
+-- isn't loaded yet.
+local function ItemStats(itemID, itemKey)
+    local _, link = C_Item.GetItemInfo(itemID)
+    if not link then return nil end
+    local stats
+    -- random-suffix items ("of the ..."): their stats come from the suffix, so ask for that variant
+    local suffix = itemKey and itemKey.itemSuffix
+    if suffix and suffix ~= 0 and C_Item.GetItemStats then
+        stats = C_Item.GetItemStats(("item:%d:0:0:0:0:0:%d"):format(itemID, suffix))
+    end
+    return stats or (C_Item.GetItemStats and C_Item.GetItemStats(link)) or {}
+end
+
+local function HasOtherPrimary(itemID, want, itemKey)
+    local stats = ItemStats(itemID, itemKey)
+    if not stats then return nil end
+    local anyPrimary, hasWanted = false, false
+    for key in pairs(stats) do
+        for code, word in pairs(STAT_WORD) do
+            if key:find(word, 1, true) and not key:find("RATING", 1, true) then
+                anyPrimary = true
+                if code == want then hasWanted = true end
+            end
+        end
+    end
+    return anyPrimary and not hasWanted
+end
+
+-- true = hide (stat filter on and the item is for another primary stat)
+local function IsWrongStat(itemID, itemKey)
+    local want = WantedStat()
+    if not want then return false end
+    local other = HasOtherPrimary(itemID, want, itemKey)
+    if other == nil then
+        expansionPending[itemID] = true
+        if C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(itemID) end
+        return false
+    end
+    return other
+end
+
+-- true = hide (cheapest listing above the max price in gold)
+local function OverPrice(minPrice)
+    local g = VoidUIAuctionDB and VoidUIAuctionDB.maxPriceG
+    return g and g > 0 and type(minPrice) == "number" and minPrice > g * 10000 or false
+end
+
+local function ActiveFilterCount()
+    local db, n = VoidUIAuctionDB or {}, 0
+    if db.usableOnly then n = n + 1 end
+    if db.upgradesOnly then n = n + 1 end
+    if db.uncollectedOnly then n = n + 1 end
+    if db.statFilter and db.statFilter ~= "any" then n = n + 1 end
+    if db.maxPriceG then n = n + 1 end
+    for _, qf in ipairs(QUALITY_FILTERS) do
+        if not QualityOn(qf.key) then n = n + 1; break end
+    end
+    return n
+end
+
+-- Upgrade arrow: item level over what you wear in that slot (the lower of a pair for
+-- rings, trinkets and one-handers). Only for gear this character can use now, with your
+-- spec's primary stat (or none).
+local INV_SLOTS = {
+    INVTYPE_HEAD = { 1 }, INVTYPE_NECK = { 2 }, INVTYPE_SHOULDER = { 3 }, INVTYPE_CHEST = { 5 },
+    INVTYPE_ROBE = { 5 }, INVTYPE_WAIST = { 6 }, INVTYPE_LEGS = { 7 }, INVTYPE_FEET = { 8 },
+    INVTYPE_WRIST = { 9 }, INVTYPE_HAND = { 10 }, INVTYPE_FINGER = { 11, 12 }, INVTYPE_TRINKET = { 13, 14 },
+    INVTYPE_CLOAK = { 15 }, INVTYPE_WEAPON = { 16, 17 }, INVTYPE_2HWEAPON = { 16 },
+    INVTYPE_WEAPONMAINHAND = { 16 }, INVTYPE_WEAPONOFFHAND = { 17 }, INVTYPE_HOLDABLE = { 17 },
+    INVTYPE_SHIELD = { 17 }, INVTYPE_RANGED = { 16 }, INVTYPE_RANGEDRIGHT = { 16 },
+}
+local function EquippedIlvl(slot)
+    local link = GetInventoryItemLink("player", slot)
+    if not link then return 0 end   -- empty slot: anything is an upgrade
+    return (C_Item.GetDetailedItemLevelInfo(link)) or 0
+end
+local function UpgradeGain(itemID, ilvl, itemKey)
+    if not ilvl or ilvl <= 0 then return nil end
+    local equipLoc = select(4, C_Item.GetItemInfoInstant(itemID))
+    local slots = equipLoc and INV_SLOTS[equipLoc]
+    if not slots then return nil end
+    local req = itemKey and C_AuctionHouse.GetItemKeyRequiredLevel and C_AuctionHouse.GetItemKeyRequiredLevel(itemKey)
+    if type(req) == "number" and req > (UnitLevel("player") or 0) then return nil end
+    if C_PlayerInfo and C_PlayerInfo.CanUseItem then
+        local ok, can = pcall(C_PlayerInfo.CanUseItem, itemID)
+        if ok and can == false then return nil end
+    end
+    local mine = SpecStat()
+    if mine and HasOtherPrimary(itemID, mine, itemKey) then return nil end
+    -- a one-hander only counts against the off hand if you can dual wield
+    if equipLoc == "INVTYPE_WEAPON" and not (CanDualWield and CanDualWield()) then slots = { 16 } end
+    local worst
+    for _, s in ipairs(slots) do
+        local e = EquippedIlvl(s)
+        if not worst or e < worst then worst = e end
+    end
+    local gain = ilvl - (worst or 0)
+    return gain > 0 and gain or nil
+end
+
+-- How good an upgrade is, from your spec's secondary stat priority (StatPriority.lua --
+-- the stats the top Mythic+ players of your spec wear, Blizzard data):
+--   "best" = every secondary stat on the item is one of your top two (green arrow)
+--   "ok"   = it carries a weaker one, e.g. Versatility for Outlaw (orange arrow)
+-- No data for your spec, or no secondaries / data not loaded yet: "best" (item level decides).
+local SECONDARY_KEY = { CRIT = "CRIT_RATING", HASTE = "HASTE_RATING", MASTERY = "MASTERY_RATING", VERS = "VERSATILITY" }
+
+-- The secondaries the row's own hover tooltip shows ("+57 Haste"), read from Blizzard's
+-- tooltip data for that auction item key -- what you see is what's judged. The base item's
+-- stats aren't enough: crafted gear has no fixed secondaries on the base item, and a
+-- Haste/Versatility pair came out green (2026-10-24). Cached per item key; an empty read
+-- (item data not loaded yet) isn't cached so it's tried again.
+local statLabelPatterns
+local tooltipSecCache = {}
+local function TooltipSecondaries(itemKey)
+    if not (itemKey and C_TooltipInfo and C_TooltipInfo.GetItemKey) then return nil end
+    local ck = ("%d:%d:%d"):format(itemKey.itemID or 0, itemKey.itemLevel or 0, itemKey.itemSuffix or 0)
+    if tooltipSecCache[ck] then return tooltipSecCache[ck] end
+    if not statLabelPatterns then
+        -- lowercased stat name -> code, from the game's own (localized) short and long names
+        statLabelPatterns = {}
+        for code, globals in pairs({
+                CRIT = { "ITEM_MOD_CRIT_RATING_SHORT", "STAT_CRITICAL_STRIKE", "CRIT_ABBR" },
+                HASTE = { "ITEM_MOD_HASTE_RATING_SHORT", "STAT_HASTE" },
+                MASTERY = { "ITEM_MOD_MASTERY_RATING_SHORT", "STAT_MASTERY" },
+                VERS = { "ITEM_MOD_VERSATILITY", "STAT_VERSATILITY" } }) do
+            for _, g in ipairs(globals) do
+                local label = _G[g]
+                if type(label) == "string" and label ~= "" then statLabelPatterns[label:lower()] = code end
+            end
+        end
+    end
+    local req = C_AuctionHouse.GetItemKeyRequiredLevel and C_AuctionHouse.GetItemKeyRequiredLevel(itemKey)
+    local ok, data = pcall(C_TooltipInfo.GetItemKey, itemKey.itemID, itemKey.itemLevel, itemKey.itemSuffix, req)
+    if not (ok and type(data) == "table" and data.lines) then return nil end
+    local found, any = {}, false
+    for _, line in ipairs(data.lines) do
+        local t = line.leftText
+        if type(t) == "string" and not (issecretvalue and issecretvalue(t)) then
+            t = t:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")
+            -- "+57 Haste", or a RANGE on auction rows: "+6-11 Critical Strike" (all ranges
+            -- went grey before, 2026-10-24)
+            local name = t:match("^%+%s*[%d,%.]+%s*%-?%s*[%d,%.]*%s+(.-)%s*$")
+            local code = name and statLabelPatterns[name:lower()]
+            if code then found[code] = true; any = true end
+        end
+    end
+    if any then tooltipSecCache[ck] = found end
+    return any and found or nil
+end
+
+-- "best" | "ok" | "unknown" (secondaries couldn't be read: grey arrow, check the tooltip).
+-- No stat data for your spec: "best" (item level decides).
+local function UpgradeTier(itemID, itemKey)
+    local prio = AH.StatPriority and AH.StatPriority[(SpecInfo()) or 0]
+    if not prio then return "best" end
+    local top = { [prio.order[1]] = true, [prio.order[2]] = true }
+    local secs = TooltipSecondaries(itemKey)
+    if not secs then   -- fall back to the item's own stats (fixed-stat gear)
+        local stats = ItemStats(itemID, itemKey)
+        for key in pairs(stats or {}) do
+            for code, word in pairs(SECONDARY_KEY) do
+                if key:find(word, 1, true) then secs = secs or {}; secs[code] = true end
+            end
+        end
+    end
+    if not secs then return "unknown" end
+    for code in pairs(secs) do
+        if not top[code] then return "ok" end
+    end
+    return "best"
 end
 
 -- true = hide this item (known to be from an older expansion). Items whose data
@@ -912,7 +1173,7 @@ end
 -- data loads, the browse list is re-filtered so old-expansion items drop out
 -- (before, they were kept and never re-checked -- the "Midnight only" box let
 -- every not-yet-cached old item through).
-local expansionPending = {}
+-- (expansionPending is declared above AuctionDB: the stat filter shares it)
 
 local function IsOldExpansionItem(itemID)
     if not CurrentExpansionOnly() then return false end
@@ -925,6 +1186,26 @@ local function IsOldExpansionItem(itemID)
         return false
     end
     return expac < cur
+end
+
+-- true = hide (Usable only is on and this character can't use it). Uncached items stay
+-- visible and are re-filtered when their data loads (shares expansionPending).
+local function IsUnusableResult(itemKey)
+    if not UsableOnly() then return false end
+    local itemID = itemKey and itemKey.itemID
+    if not itemID then return false end
+    local req = C_AuctionHouse.GetItemKeyRequiredLevel and C_AuctionHouse.GetItemKeyRequiredLevel(itemKey)
+    if type(req) == "number" and req > (UnitLevel("player") or 0) then return true end
+    if C_Item.IsItemDataCachedByID and not C_Item.IsItemDataCachedByID(itemID) then
+        expansionPending[itemID] = true
+        if C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(itemID) end
+        return false
+    end
+    if C_PlayerInfo and C_PlayerInfo.CanUseItem then
+        local ok, can = pcall(C_PlayerInfo.CanUseItem, itemID)
+        if ok and can == false then return true end
+    end
+    return false
 end
 
 local function CurrentExpansionName()
@@ -1158,6 +1439,7 @@ HideConfirmBar = function()
 end
 
 PopulateBuyRow = function(row, listing, visualIndex)
+    if row._upArrow then row._upArrow:Hide() end
     if not listing then
         row:Hide()
         return
@@ -1273,9 +1555,27 @@ local function PopulateBrowseRow(row, data, visualIndex)
     row._name:SetText(itemName or ("Item " .. data.itemID))
     row._name:SetWidth(220)
 
-    -- iLvl
+    -- iLvl (green + arrow on the icon when it beats what you wear in that slot)
+    local gain = UpgradeGain(data.itemID, data.ilvl, data.itemKey)
+    -- green = upgrade with your best secondary stats, orange = upgrade with weaker ones
+    local tier = gain and UpgradeTier(data.itemID, data.itemKey)
+    local gainColor = (tier == "ok") and "|cffff9933" or (tier == "unknown") and "|cffcccccc" or "|cff33ff33"
     if row._ilvl then
-        row._ilvl:SetText(data.ilvl and data.ilvl > 0 and tostring(data.ilvl) or "")
+        local txt = data.ilvl and data.ilvl > 0 and tostring(data.ilvl) or ""
+        row._ilvl:SetText((gain and txt ~= "") and (gainColor .. txt .. "|r") or txt)
+    end
+    if row._upArrow then
+        row._upArrow:SetShown(gain ~= nil)
+        row._upArrow:SetDesaturated(tier == "ok" or tier == "unknown")
+        -- Orange: a tint can only darken, and grey x orange came out brown, so draw it
+        -- additive -- bright orange on the dark rows. Green as drawn; grey when desaturated.
+        if tier == "ok" then
+            row._upArrow:SetBlendMode("ADD")
+            row._upArrow:SetVertexColor(1, 0.55, 0.05)
+        else
+            row._upArrow:SetBlendMode("BLEND")
+            row._upArrow:SetVertexColor(1, 1, 1)
+        end
     end
 
     local totalQty = VoidUI.AH.SafeNum(data.totalQuantity) or 0
@@ -1299,7 +1599,8 @@ local function PopulateBrowseRow(row, data, visualIndex)
     else
         row._deal:SetText("")
     end
-    row._extra:SetText(data.containsOwnerItem and "|cff00ffffYours|r" or "")
+    row._extra:SetText(data.containsOwnerItem and "|cff00ffffYours|r"
+        or (gain and (gainColor .. "+" .. gain .. " ilvl|r")) or "")
 
     local even = (visualIndex % 2 == 0)
     local bgVal = even and 0.14 or 0.10
@@ -1458,10 +1759,22 @@ function BuildBrowseTab(parent)
             buyItemKey = nil
             buyItemName = nil
             RefreshBrowseRows()
+            if filtersDirty then   -- filters changed while on the listings screen
+                local server = filtersDirty == "server"
+                filtersDirty = nil
+                if server then
+                    local t = parent._searchBox and parent._searchBox:GetText() or ""
+                    if t ~= "" then BrowseSearch(t) else SendCategoryBrowseQuery() end
+                elseif UpdateBrowseResults then
+                    UpdateBrowseResults()
+                end
+            end
         elseif browseView == BROWSE_VIEW_RESULTS then
             browseView = BROWSE_VIEW_TREE
             browseOffset = 0
             ilvlSortOrder = nil
+            -- back at Categories: a search from here is for everything, not the last category
+            selectedClassID, selectedSubClassID = nil, nil
             if parent._ilvlHeaderText then
                 parent._ilvlHeaderText:SetText("iLvl")
                 parent._ilvlHeaderText:SetTextColor(0.67, 0.67, 0.67)
@@ -1490,38 +1803,146 @@ function BuildBrowseTab(parent)
         BrowseSearch(self:GetText())
     end)
 
-    -- "<Expansion> only" checkbox, just left of the search box.
-    local expCheck = CreateFrame("CheckButton", nil, navBar, "UICheckButtonTemplate")
-    expCheck:SetSize(22, 22)
-    local expLabel = navBar:CreateFontString(nil, "OVERLAY")
-    VoidUI:SetFont(expLabel, 10, "")
-    expLabel:SetText(CurrentExpansionName() .. " only")
-    expLabel:SetTextColor(0.9, 0.9, 0.9)
-    expLabel:SetPoint("RIGHT", searchBox, "LEFT", -10, 0)
-    expCheck:SetPoint("RIGHT", expLabel, "LEFT", -1, 0)
-    expCheck:SetChecked(CurrentExpansionOnly())
-    expCheck:SetScript("OnClick", function(self)
-        VoidUIAuctionDB = VoidUIAuctionDB or {}
-        VoidUIAuctionDB.currentExpansionOnly = self:GetChecked() and true or false
-        -- Re-run whatever is on screen with the new filter.
-        if browseView == BROWSE_VIEW_RESULTS then
+    -- Filters dropdown + max price, just left of the search box. Server-side filters
+    -- (quality, upgrades, uncollected) re-run the search; client-side ones (usable,
+    -- expansion, primary stat, price) just re-filter what's already loaded.
+    local function Rerun(server)
+        if browseView == BROWSE_VIEW_LISTINGS then   -- apply when you go Back to the results
+            filtersDirty = (server or filtersDirty == "server") and "server" or "client"
+            return
+        end
+        if browseView ~= BROWSE_VIEW_RESULTS then return end
+        if server then
             local t = searchBox:GetText()
             if t and t ~= "" then BrowseSearch(t) else SendCategoryBrowseQuery() end
+        elseif UpdateBrowseResults then
+            UpdateBrowseResults()
         end
+    end
+
+    local filterBtn = CreateFrame("Button", nil, navBar, "UIPanelButtonTemplate")
+    filterBtn:SetSize(84, 20)
+    filterBtn:SetPoint("RIGHT", searchBox, "LEFT", -10, 0)
+    local function FilterLabel()
+        local n = ActiveFilterCount()
+        filterBtn:SetText(n > 0 and ("Filters (" .. n .. ")") or "Filters")
+    end
+    FilterLabel()
+    filterBtn:SetScript("OnClick", function(self)
+        MenuUtil.CreateContextMenu(self, function(_, root)
+            local function Flag(text, key, server, tip)
+                local cb = root:CreateCheckbox(text,
+                    function() return VoidUIAuctionDB and VoidUIAuctionDB[key] == true end,
+                    function()
+                        local db = AuctionDB()
+                        db[key] = not db[key]
+                        FilterLabel(); Rerun(server)
+                    end)
+                if tip then cb:SetTooltip(function(t) GameTooltip_AddNormalLine(t, tip) end) end
+                return cb
+            end
+            root:CreateTitle("Show only")
+            Flag("Usable only", "usableOnly", false, "Items your character can use now: class, armor/weapon type and level.")
+            Flag("Upgrades only", "upgradesOnly", true, "Blizzard's own upgrade check against what you're wearing.")
+            Flag("Uncollected only", "uncollectedOnly", true, "Appearances, pets, mounts and toys you don't have yet.")
+            local exp = root:CreateCheckbox(CurrentExpansionName() .. " only",
+                function() return CurrentExpansionOnly() end,
+                function()
+                    local db = AuctionDB()
+                    db.currentExpansionOnly = not CurrentExpansionOnly()
+                    FilterLabel(); Rerun(false)
+                end)
+            if IsLeveling() then exp:SetEnabled(false) end   -- off while leveling (see CurrentExpansionOnly)
+
+            root:CreateDivider()
+            root:CreateTitle("Quality")
+            for _, qf in ipairs(QUALITY_FILTERS) do
+                local color = ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[qf.q]
+                local label = _G["ITEM_QUALITY" .. qf.q .. "_DESC"] or qf.key
+                if color and color.hex then label = color.hex .. label .. "|r" end
+                root:CreateCheckbox(label,
+                    function() return QualityOn(qf.key) end,
+                    function()
+                        local db = AuctionDB()
+                        db.qualityOff = db.qualityOff or {}
+                        db.qualityOff[qf.key] = QualityOn(qf.key) or nil
+                        FilterLabel(); Rerun(true)
+                    end)
+            end
+
+            root:CreateDivider()
+            root:CreateTitle("Primary stat")
+            local function Stat(text, val)
+                root:CreateRadio(text,
+                    function() return (VoidUIAuctionDB and VoidUIAuctionDB.statFilter or "any") == val end,
+                    function()
+                        AuctionDB().statFilter = val
+                        FilterLabel(); Rerun(false)
+                    end)
+            end
+            local mine = SpecStat()
+            Stat("Any", "any")
+            Stat("Your spec" .. (mine and (" (" .. STAT_NAMES[mine] .. ")") or ""), "spec")
+            Stat("Agility", "AGI")
+            Stat("Strength", "STR")
+            Stat("Intellect", "INT")
+
+            root:CreateDivider()
+            root:CreateButton("|cffff8888Reset filters|r", function()
+                local db = AuctionDB()
+                db.usableOnly, db.upgradesOnly, db.uncollectedOnly = nil, nil, nil
+                db.qualityOff, db.statFilter, db.maxPriceG = nil, nil, nil
+                db.currentExpansionOnly = nil   -- back to its default (on at max level)
+                if parent._maxPrice then parent._maxPrice:SetText("") end
+                FilterLabel(); Rerun(true)
+            end)
+        end)
     end)
-    expCheck:SetScript("OnEnter", function(self)
+    filterBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_TOP")
-        GameTooltip:SetText(CurrentExpansionName() .. " only")
-        GameTooltip:AddLine("Hide items from older expansions -- their enchants, gems and consumables don't work on current-season gear.", 1, 1, 1, true)
+        GameTooltip:SetText("Filters")
+        GameTooltip:AddLine("Usable / upgrades / uncollected, quality, primary stat. Rows show a green arrow and +ilvl when an item beats what you wear.", 1, 1, 1, true)
         GameTooltip:Show()
     end)
-    expCheck:SetScript("OnLeave", function() GameTooltip:Hide() end)
-    parent._expCheck = expCheck
+    filterBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    parent._filterBtn = filterBtn
+    parent._filterLabel = FilterLabel
+
+    -- Max price (gold). Empty = no limit.
+    local maxBox = CreateFrame("EditBox", nil, navBar, "InputBoxTemplate")
+    maxBox:SetSize(54, 18)
+    maxBox:SetAutoFocus(false)
+    maxBox:SetNumeric(true)
+    maxBox:SetMaxLetters(7)
+    maxBox:SetPoint("RIGHT", filterBtn, "LEFT", -18, 0)
+    local mg = VoidUIAuctionDB and VoidUIAuctionDB.maxPriceG
+    maxBox:SetText(mg and tostring(mg) or "")
+    local maxLabel = navBar:CreateFontString(nil, "OVERLAY")
+    VoidUI:SetFont(maxLabel, 10, "")
+    maxLabel:SetText("Max g")
+    maxLabel:SetTextColor(0.9, 0.9, 0.9)
+    maxLabel:SetPoint("RIGHT", maxBox, "LEFT", -8, 0)
+    local function ApplyMax(self)
+        local v = tonumber(self:GetText() or "")
+        AuctionDB().maxPriceG = (v and v > 0) and v or nil
+        FilterLabel(); Rerun(false)
+    end
+    maxBox:SetScript("OnEnterPressed", function(self) self:ClearFocus(); ApplyMax(self) end)
+    maxBox:SetScript("OnEditFocusLost", ApplyMax)
+    maxBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    maxBox:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Max price")
+        GameTooltip:AddLine("Hide items whose cheapest listing costs more than this many gold. Empty = no limit.", 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    maxBox:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    parent._maxPrice = maxBox
 
     local countLabel = navBar:CreateFontString(nil, "OVERLAY")
     VoidUI:SetFont(countLabel, 9, "")
     countLabel:SetTextColor(0.7, 0.7, 0.7)
-    countLabel:SetPoint("RIGHT", expCheck, "LEFT", -8, 0)
+    countLabel:SetPoint("RIGHT", maxLabel, "LEFT", -10, 0)
     parent._countLabel = countLabel
 
     -- Column headers (results view only)
@@ -1781,7 +2202,7 @@ function BrowseSearch(text)
     RefreshBrowseRows()
 end
 
-local function UpdateBrowseResults()
+UpdateBrowseResults = function()
     if not tabFrames or not tabFrames[1] then return end
     local parent = tabFrames[1]
     if not parent._rows then return end
@@ -1791,7 +2212,8 @@ local function UpdateBrowseResults()
     if results and #results > 0 then
         for _, r in ipairs(results) do
             local itemID = r.itemKey.itemID
-          if not IsOldExpansionItem(itemID) then
+          if not IsOldExpansionItem(itemID) and not IsUnusableResult(r.itemKey)
+             and not IsWrongStat(itemID, r.itemKey) and not OverPrice(VoidUI.AH.SafeNum(r.minPrice)) then
             -- Two ilvl sources — take the higher (more accurate) one:
             --   itemKey.itemLevel = actual listing ilvl (M+ / raid / etc), 0 for commodities
             --   GetItemInfo = base template ilvl (correct for fixed-ilvl gear, low for variable)
@@ -2731,6 +3153,11 @@ StaticPopupDialogs["VOIDAH_CONFIRM_POST"] = {
     OnShow = function() StaticPopup_Hide("AUCTION_HOUSE_POST_WARNING") end,
     OnAccept = function(self, data)
         if not (data and data.args and C_Item.DoesItemExist(data.args[1])) then return end
+        -- same item still in that slot? (bags may have been sorted while the popup was up)
+        if data.itemID and C_Item.GetItemID(data.args[1]) ~= data.itemID then
+            print("|cffff0000VoidUI AH|r: That item moved in your bags -- not posted. Pick it again.")
+            return
+        end
         local a = data.args
         if data.commodity then
             C_AuctionHouse.ConfirmPostCommodity(a[1], a[2], a[3], a[4])
@@ -2745,7 +3172,8 @@ StaticPopupDialogs["VOIDAH_CONFIRM_POST"] = {
 }
 
 local function ShowPostConfirm(commodity, args, itemName)
-    StaticPopup_Show("VOIDAH_CONFIRM_POST", itemName, nil, { commodity = commodity, args = args })
+    StaticPopup_Show("VOIDAH_CONFIRM_POST", itemName, nil,
+        { commodity = commodity, args = args, itemID = sellPending.itemID })
 end
 
 function SellTab_PostAuction(parent)
@@ -2756,6 +3184,12 @@ function SellTab_PostAuction(parent)
 
     if not C_Item.DoesItemExist(sellPending.itemLocation) then
         print("|cffff0000VoidUI AH|r: No item selected or item no longer exists.")
+        return
+    end
+    -- The bag slot must still hold the item you picked: sorting bags after selecting
+    -- would otherwise post whatever moved into that slot at the first item's price.
+    if C_Item.GetItemID(sellPending.itemLocation) ~= sellPending.itemID then
+        print("|cffff0000VoidUI AH|r: That item moved in your bags -- pick it again before posting.")
         return
     end
 

@@ -10,14 +10,17 @@ VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Se
 
 ### Browse
 - **Category tree and search box**, results sorted by price or item level
-- **"Midnight only" checkbox** (on by default) hides older-expansion items, so you never buy an old enchant or gem that won't work on current gear
+- **Filters menu**: Usable only, Upgrades only, Uncollected only, Midnight only, item quality, and **primary stat** (Any / your spec / Agility / Strength / Intellect)
+- **Max price** box — hide anything above your budget
+- **Upgrade arrows**: gear that beats what you're wearing in that slot gets an arrow and "+N ilvl". **Green** = it has your spec's two best secondary stats, **orange** = it's an upgrade but carries a weaker one, **grey** = an upgrade whose stats can't be read (hover to check). Stat priorities come from what the top Mythic+ players of each spec actually wear (Blizzard's own data)
+- **"Midnight only"** (on by default at max level, off while leveling) hides older-expansion items, so you never buy an old enchant or gem that won't work on current gear
 - **Secure buy bar** with a quantity box
 - **Ctrl-click** any item to preview it in the dressing room, **Shift-click** to link it in chat
 
 ### Sell
 - Stack-size and total-quantity inputs with a **deposit calculator**
 - **Smart undercut** — fills in a price just below the cheapest listing
-- Copper-precise pricing; soulbound and warbound items are hidden automatically
+- Prices in whole silver (the auction house's own rule); soulbound and warbound items are hidden automatically
 
 ### My Auctions
 - All your active listings in one view, with a **cancel button** on each row

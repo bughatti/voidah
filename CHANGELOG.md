@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.3.0] — 2026-10-24
+
+### Added
+- **Filters menu on Browse.** Usable only, Upgrades only, Uncollected only, Midnight only, item quality, and primary stat (Any / your spec / Agility / Strength / Intellect). The button shows how many filters are on, and Reset clears them.
+- **Max price.** Type a gold amount and anything whose cheapest listing costs more is hidden.
+- **Upgrade arrows.** Gear that beats what you're wearing in that slot shows an arrow and "+N ilvl". Rings, trinkets and one-handers are compared with the lower of your pair, and the off hand only counts if you can dual wield.
+  - **Green:** both of its secondary stats are your spec's two best.
+  - **Orange:** it's an upgrade, but it carries a weaker stat.
+  - **Grey:** its stats can't be read. Hover it to check.
+- **Stat priorities from real players.** For every spec, the secondary stats the top Mythic+ players actually wear, taken from Blizzard's own data.
+
+### Fixed
+- **Posting could list the wrong item.** If you sorted your bags after picking an item to sell, the post went to whatever moved into that slot, at the first item's price. It now stops and asks you to pick the item again.
+- **Blizzard's filters (usable, current expansion) returned nothing.** The search left out the item-quality filters, which the auction house needs as well.
+- **Searching after going Back to Categories** stayed limited to the category you'd just left.
+- **"Midnight only" no longer hides gear while you're leveling.** You need older-expansion gear until max level.
+
 ## [1.2.13] — 2026-10-23
 
 ### Fixed
