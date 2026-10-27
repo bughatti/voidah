@@ -10,6 +10,8 @@ local GetItemClassInfo    = (C_Item and C_Item.GetItemClassInfo) or GetItemClass
 local GetItemSubClassInfo = (C_Item and C_Item.GetItemSubClassInfo) or GetItemSubClassInfo
 local GetItemInfoInstant  = (C_Item and C_Item.GetItemInfoInstant) or GetItemInfoInstant
 local GetItemCount        = (C_Item and C_Item.GetItemCount) or GetItemCount
+-- Global IsPlayerSpell only exists via the deprecation fallbacks (loadDeprecationFallbacks).
+local IsPlayerSpell       = (C_SpellBook and C_SpellBook.IsSpellKnown) or IsPlayerSpell
 
 local PANEL_W, PANEL_H = 900, 620
 local TAB_NAMES = { "Browse", "Sell", "My Auctions", "Deals", "Scan", "Professions" }
@@ -81,6 +83,17 @@ local function CaptureTradeSkillSnapshot()
     -- 12.0.7 removed GetAllRecipeIDs; GetFilteredRecipeIDs is the replacement
     -- (Blizzard's own Professions UI uses it). With default filters it returns
     -- the full learned set, which we then gate per-recipe on rInfo.learned.
+    -- ...but it honours the profession window's search box and filters: a filtered
+    -- list would replace the cache with a subset. Only snapshot an unfiltered list.
+    local T = C_TradeSkillUI
+    local function on(fn) return T[fn] and T[fn]() end
+    if (T.GetRecipeItemNameFilter and (T.GetRecipeItemNameFilter() or "") ~= "")
+       or on("GetOnlyShowMakeableRecipes") or on("GetOnlyShowSkillUpRecipes")
+       or on("GetOnlyShowFirstCraftRecipes") or on("AreAnyInventorySlotsFiltered")
+       or on("AnyRecipeCategoriesFiltered")
+       or (T.GetShowLearned and not T.GetShowLearned()) then
+        return
+    end
     local recipeIDs = C_TradeSkillUI.GetFilteredRecipeIDs()
     if not recipeIDs or #recipeIDs == 0 then return end
 
@@ -262,7 +275,9 @@ local function GetPlayerProfs()
     end
     local profs = {}
     local p1, p2, _, fishing, cooking = GetProfessions()
-    for _, profID in ipairs({ p1, p2, fishing, cooking }) do
+    local list = { p1, p2, fishing, cooking }
+    for i = 1, 4 do   -- not ipairs: missing professions are nil holes
+        local profID = list[i]
         if profID then
             local ok, name = pcall(GetProfessionInfo, profID)
             if ok and name then profs[name] = true end
@@ -1256,7 +1271,7 @@ StaticPopupDialogs["VOIDUI_AH_CONFIRM_BUY"] = {
     OnAccept = function(self, data)
         if data and data.auctionID and data.price then
             C_AuctionHouse.PlaceBid(data.auctionID, data.price)
-            print("|cff00ff00[VoidUI AH]|r Purchase placed!")
+            print("|cff00ff00[VoidAH]|r Purchase placed!")
             -- Refresh listings after brief delay
             C_Timer.After(0.5, function()
                 if buyItemKey and browseView == BROWSE_VIEW_LISTINGS then
@@ -1313,7 +1328,7 @@ StaticPopupDialogs["VOIDUI_AH_CONFIRM_COMMODITY_PRICE"] = {
     OnAccept = function(self, data)
         if data and data.itemID and data.quantity then
             C_AuctionHouse.ConfirmCommoditiesPurchase(data.itemID, data.quantity)
-            print("|cff00ff00[VoidUI AH]|r Commodity purchase confirmed!")
+            print("|cff00ff00[VoidAH]|r Commodity purchase confirmed!")
         end
     end,
     OnCancel = function()
@@ -1372,6 +1387,25 @@ end
 ----------------------------------------------------------------------
 -- Inline Confirm Bar (replaces StaticPopup for buy flow)
 ----------------------------------------------------------------------
+local multiByAuction, FinishMultiBuy = {}   -- multi-buy from a grouped item row: auctionID -> batch
+
+-- What makes two auctions under one item key the same thing to a buyer: enchant, gems, suffix
+-- and bonus IDs (sockets, tertiaries), or a pet's level / quality / stats. nil = unknown.
+local function AuctionVariant(link)
+    if type(link) ~= "string" or VoidLib.Secrets.IsSecret(link) then return nil end
+    local pet = link:match("battlepet:([%d:]+)")
+    if pet then return "p" .. (pet:match("^(%d+:%d+:%d+:%d+:%d+:%d+)") or pet) end
+    local body = link:match("item:([%-%d:]*)")
+    if not body then return nil end
+    local f = {}
+    for v in (body .. ":"):gmatch("([^:]*):") do f[#f + 1] = v end
+    -- 1 itemID, 2 enchant, 3-6 gems, 7 suffix, 8 unique, 9 linkLevel, 10 spec, 11 mods, 12 context, 13 #bonus
+    local bonus = {}
+    for i = 1, tonumber(f[13]) or 0 do bonus[i] = tonumber(f[13 + i]) or 0 end
+    table.sort(bonus)
+    return table.concat({ f[1] or "", f[2] or "", f[3] or "", f[4] or "", f[5] or "", f[6] or "", f[7] or "" }, ":")
+        .. "|" .. table.concat(bonus, ",")
+end
 ShowConfirmBar = function(opts)
     -- opts = { isCommodity, itemName, unitPrice, auctionID, buyoutAmount, itemID }
     if not tabFrames or not tabFrames[1] then return end
@@ -1403,23 +1437,53 @@ ShowConfirmBar = function(opts)
     else
         -- Item: direct PlaceBid on confirm
         local buyoutSafe = VoidUI.AH.SafeNum(opts.buyoutAmount)
+        local avail = VoidUI.AH.SafeNum(opts.quantity) or 1
+        bar._multi = nil
         bar._info:SetText("|cff00c7ff" .. (opts.itemName or "item") .. "|r  —  " ..
-            (buyoutSafe and VoidUI:FormatMoney(buyoutSafe) or "—"))
-        bar._qtyLabel:Hide()
-        bar._qtyBox:Hide()
+            (buyoutSafe and VoidUI:FormatMoney(buyoutSafe) or "—") ..
+            (avail > 1 and (" each  |cff888888(%d available)|r"):format(avail) or ""))
+        -- Several identical auctions in one row: ask how many. Each one is its own auction,
+        -- and PlaceBid needs a click per auction (restricted API), so Confirm Buy steps
+        -- through them one click at a time, never above the starting price.
+        bar._qtyLabel:SetShown(avail > 1)
+        bar._qtyBox:SetShown(avail > 1)
+        bar._qtyBox:SetText("1")
         bar._confirmBtn._text:SetText("|cff00ff00Confirm Buy|r")
         bar._confirmBtn:SetScript("OnClick", function()
             if opts.auctionID and buyoutSafe then
+                local m = bar._multi
+                if not m then
+                    local want = math.max(1, math.min(tonumber(bar._qtyBox:GetText()) or 1, avail))
+                    m = { want = want, done = 0, got = 0, ids = {}, maxPrice = buyoutSafe, name = opts.itemName,
+                          variant = opts.variant }   -- only the same version of the item (Codex review)
+                    bar._multi = m
+                    bar._qtyBox:Hide(); bar._qtyLabel:Hide()
+                end
+                m.ids[opts.auctionID] = true
+                -- AUCTION_HOUSE_PURCHASE_COMPLETED counts real purchases, per batch
+                if m.want > 1 and not multiByAuction[opts.auctionID] then multiByAuction[opts.auctionID] = m end
                 -- PlaceBid with bidAmount==buyout works for both bid-only and buyout listings.
                 -- (For pure buyouts, this completes the purchase; for bid-only, it places the bid.)
-                C_AuctionHouse.PlaceBid(opts.auctionID, buyoutSafe)
-                print("|cff00ff00[VoidUI AH]|r Purchase placed!")
-                bar:Hide()
-                -- Refresh listings
+                -- opts.buyoutAmount: the CURRENT auction's price (ContinueMultiBuy moves it on)
+                C_AuctionHouse.PlaceBid(opts.auctionID, VoidUI.AH.SafeNum(opts.buyoutAmount) or buyoutSafe)
+                m.done = m.done + 1
+                if m.done < m.want then
+                    -- wait for the refreshed listings, then point at the next auction
+                    m.waiting = true
+                    bar._confirmBtn:Disable()
+                    bar._info:SetText(("|cffffd700Bought %d of %d -- finding the next one...|r"):format(m.done, m.want))
+                else
+                    if m.want > 1 then FinishMultiBuy(m) else print("|cff00ff00[VoidAH]|r Purchase placed!") end
+                    bar._multi = nil
+                    bar:Hide()
+                end
+                -- Refresh listings (the key can be cleared by Back before this runs)
+                local key = buyItemKey
                 C_Timer.After(0.5, function()
-                    if buyItemKey and browseView == BROWSE_VIEW_LISTINGS then
+                    if key and buyItemKey == key and browseView == BROWSE_VIEW_LISTINGS then
                         AH:_Enqueue(function()
-                            C_AuctionHouse.SendSearchQuery(buyItemKey,
+                            if buyItemKey ~= key then return end
+                            C_AuctionHouse.SendSearchQuery(key,
                                 {{ sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort = false }}, false)
                         end)
                     end
@@ -1435,7 +1499,76 @@ end
 HideConfirmBar = function()
     if not tabFrames or not tabFrames[1] then return end
     local bar = tabFrames[1]._confirmBar
-    if bar then bar:Hide() end
+    if bar then bar._multi = nil; bar:Hide() end
+end
+
+-- Report a multi-buy by what the server CONFIRMED (a click on an auction someone else just
+-- bought, or with too little gold, fails) -- give the last confirmations 3s to land. Each
+-- batch keeps its own auction IDs, so starting another buy doesn't steal its confirmations.
+FinishMultiBuy = function(m)
+    C_Timer.After(3, function()
+        print(("|cff00ff00[VoidAH]|r Bought %d %s%s."):format(m.got, m.name or "item",
+            m.got < m.done and (" (%d click%s not confirmed -- already sold, or not enough gold)"):format(
+                m.done - m.got, (m.done - m.got) == 1 and "" or "s") or ""))
+        for id in pairs(m.ids) do
+            if multiByAuction[id] == m then multiByAuction[id] = nil end
+        end
+    end)
+end
+do
+    local f = CreateFrame("Frame")
+    f:RegisterEvent("AUCTION_HOUSE_PURCHASE_COMPLETED")
+    f:SetScript("OnEvent", function(_, _, auctionID)
+        local m = auctionID and multiByAuction[auctionID]
+        if m then m.got = m.got + 1; multiByAuction[auctionID] = nil end
+    end)
+end
+
+-- Buying several from a grouped item row: once the refreshed listings arrive, point the
+-- confirm bar at the next auction at or under the starting price (one click each).
+local function ContinueMultiBuy()
+    local bar = tabFrames and tabFrames[1] and tabFrames[1]._confirmBar
+    local m = bar and bar._multi
+    if not (m and m.waiting and bar:IsShown()) then return end
+    m.waiting = nil
+    local opts = bar._pendingOpts
+    local nextL
+    for _, l in ipairs(buyListings or {}) do
+        local price = VoidUI.AH.SafeNum(l.buyoutAmount)
+        if l.auctionID and l.auctionID ~= opts.auctionID and not l.containsOwnerItem
+           and price and price <= m.maxPrice and m.variant and l.variant == m.variant then
+            nextL = l; break
+        end
+    end
+    if not nextL then
+        -- the listing we just bought can still show if the refresh beat the sale: ask again
+        local stale = false
+        for _, l in ipairs(buyListings or {}) do if l.auctionID == opts.auctionID then stale = true; break end end
+        m.tries = (m.tries or 0) + 1
+        if stale and m.tries <= 3 and buyItemKey then
+            m.waiting = true
+            local key = buyItemKey   -- Back clears it; only ask again for this same buy
+            C_Timer.After(1, function()
+                if bar._multi ~= m or buyItemKey ~= key then return end
+                AH:_Enqueue(function()
+                    if bar._multi ~= m or buyItemKey ~= key then return end
+                    C_AuctionHouse.SendSearchQuery(key,
+                        {{ sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort = false }}, false)
+                end)
+            end)
+            return
+        end
+        print(("|cff00ff00[VoidAH]|r None left at %s or less -- stopping."):format(VoidUI:FormatMoney(m.maxPrice)))
+        FinishMultiBuy(m)
+        bar._multi = nil
+        bar:Hide()
+        return
+    end
+    opts.auctionID, opts.buyoutAmount = nextL.auctionID, VoidUI.AH.SafeNum(nextL.buyoutAmount)
+    m.tries = 0   -- the stale-refresh retries count per auction (Codex review)
+    bar._info:SetText(("|cffffd700Bought %d of %d|r -- next %s: click |cff00ff00Confirm Buy|r (one click each)"):format(
+        m.done, m.want, VoidUI:FormatMoney(opts.buyoutAmount)))
+    bar._confirmBtn:Enable()
 end
 
 PopulateBuyRow = function(row, listing, visualIndex)
@@ -1514,6 +1647,9 @@ PopulateBuyRow = function(row, listing, visualIndex)
                 itemName = StripColor(buyItemName or "item"),
                 buyoutAmount = buyPrice,
                 auctionID = listing.auctionID,
+                variant = listing.variant,
+                -- identical auctions grouped in one row ("Qty 15" bags): lets you buy several
+                quantity = buyout and listing.quantity or 1,
             })
         end)
     end
@@ -1548,6 +1684,15 @@ local function PopulateBrowseRow(row, data, visualIndex)
         end
         if not data.ilvl and ilvlCache[data.itemID] then
             data.ilvl = ilvlCache[data.itemID]
+        end
+    end
+
+    -- Caged battle pets all share the Pet Cage itemID: name/icon come from the item key.
+    local speciesID = data.itemKey and data.itemKey.battlePetSpeciesID
+    if speciesID and speciesID > 0 and C_AuctionHouse.GetItemKeyInfo then
+        local keyInfo = C_AuctionHouse.GetItemKeyInfo(data.itemKey)
+        if keyInfo and keyInfo.itemName then
+            itemName, itemTexture = keyInfo.itemName, keyInfo.iconFileID or itemTexture
         end
     end
 
@@ -2329,6 +2474,11 @@ BuildSellableBagItems = function()
                 local merged = (maxStack or 1) > 1 and stackRow[info.itemID]
                 if merged then
                     merged.count = merged.count + (info.stackCount or 1)
+                    -- Profitability depends on the quantity: re-judge with the bag total.
+                    if merged._profitCheck then
+                        merged.isProfitable = IsProfitableOnAH(info.itemID, merged.count, sellPrice)
+                        merged.section = merged.isProfitable and "ah" or "vt"
+                    end
                     return
                 end
                 local _, _, _, _, instIcon, classID = GetItemInfoInstant(info.itemID)
@@ -2344,6 +2494,7 @@ BuildSellableBagItems = function()
                 local qty = info.stackCount or 1
                 local section = "main"
                 local isProfitable = false
+                local profitCheck = false   -- section came from IsProfitableOnAH (quantity-dependent)
 
                 if q == 0 then
                     section = "vt"
@@ -2365,6 +2516,7 @@ BuildSellableBagItems = function()
                         local ahPrice = AH and AH.GetPrice and AH:GetPrice(info.itemID) or nil
                         if ahPrice then
                             -- We have scan data — classify by profitability.
+                            profitCheck = true
                             if IsProfitableOnAH(info.itemID, qty, sellPrice) then
                                 section = "ah"
                                 isProfitable = true
@@ -2391,6 +2543,7 @@ BuildSellableBagItems = function()
                     classID = classID or 99,
                     section = section,
                     isProfitable = isProfitable,
+                    _profitCheck = profitCheck,
                 }
                 sellBagItems[#sellBagItems + 1] = row
                 if (maxStack or 1) > 1 then stackRow[info.itemID] = row end
@@ -2827,6 +2980,14 @@ function BuildSellTab(parent)
     copperSuffix:SetPoint("LEFT", copperBox, "RIGHT", 2, 0)
     copperSuffix:SetText("|cffeda55fc|r")
 
+    -- Typing a price (userInput) marks it as the player's: live search results
+    -- for this item then stop overwriting it (ApplySellLivePrice).
+    for _, box in ipairs({ goldBox, silverBox, copperBox }) do
+        box:HookScript("OnTextChanged", function(_, userInput)
+            if userInput then sellPending._priceEdited = true end
+        end)
+    end
+
     -- % undercut input — recomputes price from current market when changed.
     -- IMPORTANT: build WITHOUT a placeholder arg, because CreateEditBox sets
     -- its own OnTextChanged for placeholder show/hide that would conflict
@@ -2863,6 +3024,7 @@ function BuildSellTab(parent)
         parent._goldBox:SetText(tostring(math.floor(newPrice / 10000)))
         parent._silverBox:SetText(tostring(math.floor((newPrice % 10000) / 100)))
         parent._copperBox:SetText(tostring(newPrice % 100))
+        sellPending._priceEdited = nil   -- the player chose %-pricing again
     end
     undercutBox:SetScript("OnTextChanged",    CommitUndercutChange)
     undercutBox:SetScript("OnEnterPressed",   function(self) self:ClearFocus(); CommitUndercutChange() end)
@@ -3040,7 +3202,11 @@ function BuildSellTab(parent)
     parent._sellScrollThumb = scrollThumb
 end
 
+local sellSelectSeq = 0  -- bumped on every pick; a delayed retry for an older pick is dropped
+
 function SellTab_SetItem(parent, itemLocation)
+    sellSelectSeq = sellSelectSeq + 1
+    local mySeq = sellSelectSeq
     if not itemLocation or not C_Item.DoesItemExist(itemLocation) then return end
 
     local itemID = C_Item.GetItemID(itemLocation)
@@ -3048,8 +3214,9 @@ function SellTab_SetItem(parent, itemLocation)
 
     local itemName, itemLink, quality, _, _, _, _, _, _, itemTexture = C_Item.GetItemInfo(itemID)
     if not itemName then
-        -- Item info not cached yet, retry
+        -- Item info not cached yet, retry (unless another item was picked meanwhile)
         C_Timer.After(0.3, function()
+            if mySeq ~= sellSelectSeq then return end
             SellTab_SetItem(parent, itemLocation)
         end)
         return
@@ -3073,6 +3240,7 @@ function SellTab_SetItem(parent, itemLocation)
     -- Store pending
     sellPending.itemLocation = itemLocation
     sellPending.itemID = itemID
+    sellPending._priceEdited = nil   -- set when the player types a price (live prices then leave it alone)
     sellPending.isCommodity = isCommodity
     sellPending.stackCount = count
 
@@ -3108,7 +3276,7 @@ function SellTab_SetItem(parent, itemLocation)
     if price then
         local cfg = VoidUI:GetModuleConfig("Auction")
         local pct = tonumber(cfg.undercutPercent)
-        if pct and pct > 0 then
+        if pct and pct >= 0 then   -- 0% = match the market (the % box allows it)
             price = ToSilver(price * (1 - pct / 100))
         else
             local undercut = cfg.undercutCopper or 100
@@ -3155,7 +3323,7 @@ StaticPopupDialogs["VOIDAH_CONFIRM_POST"] = {
         if not (data and data.args and C_Item.DoesItemExist(data.args[1])) then return end
         -- same item still in that slot? (bags may have been sorted while the popup was up)
         if data.itemID and C_Item.GetItemID(data.args[1]) ~= data.itemID then
-            print("|cffff0000VoidUI AH|r: That item moved in your bags -- not posted. Pick it again.")
+            print("|cffff0000VoidAH|r: That item moved in your bags -- not posted. Pick it again.")
             return
         end
         local a = data.args
@@ -3178,18 +3346,18 @@ end
 
 function SellTab_PostAuction(parent)
     if not sellPending.itemLocation then
-        print("|cffffaa00VoidUI AH|r: Pick an item to sell first (from the list or your bags).")
+        print("|cffffaa00VoidAH|r: Pick an item to sell first (from the list or your bags).")
         return
     end
 
     if not C_Item.DoesItemExist(sellPending.itemLocation) then
-        print("|cffff0000VoidUI AH|r: No item selected or item no longer exists.")
+        print("|cffff0000VoidAH|r: No item selected or item no longer exists.")
         return
     end
     -- The bag slot must still hold the item you picked: sorting bags after selecting
     -- would otherwise post whatever moved into that slot at the first item's price.
     if C_Item.GetItemID(sellPending.itemLocation) ~= sellPending.itemID then
-        print("|cffff0000VoidUI AH|r: That item moved in your bags -- pick it again before posting.")
+        print("|cffff0000VoidAH|r: That item moved in your bags -- pick it again before posting.")
         return
     end
 
@@ -3199,7 +3367,7 @@ function SellTab_PostAuction(parent)
     local totalPrice = gold * 10000 + silver * 100 + copper
 
     if totalPrice <= 0 then
-        print("|cffff0000VoidUI AH|r: Price must be greater than 0.")
+        print("|cffff0000VoidAH|r: Price must be greater than 0.")
         return
     end
 
@@ -3230,7 +3398,7 @@ function SellTab_PostAuction(parent)
         local commodityPrice = math.floor(totalPrice / 100) * 100
         if commodityPrice < 100 then commodityPrice = 100 end  -- 1s minimum
         if commodityPrice ~= totalPrice then
-            print(("|cffffaa00VoidUI AH|r: Commodity price rounded to %s (PostCommodity rejects copper)."):format(
+            print(("|cffffaa00VoidAH|r: Commodity price rounded to %s (PostCommodity rejects copper)."):format(
                 VoidUI:FormatMoney(commodityPrice)))
         end
         args = { sellPending.itemLocation, duration, qty, commodityPrice }
@@ -3242,7 +3410,7 @@ function SellTab_PostAuction(parent)
         -- dropped -- every gear/decor post failed while commodities worked.
         local itemPrice = ToSilver(totalPrice)
         if itemPrice ~= totalPrice then
-            print(("|cffffaa00VoidUI AH|r: Price rounded to %s (the auction house only takes whole silver)."):format(
+            print(("|cffffaa00VoidAH|r: Price rounded to %s (the auction house only takes whole silver)."):format(
                 VoidUI:FormatMoney(itemPrice)))
             totalPrice = itemPrice
         end
@@ -3252,7 +3420,7 @@ function SellTab_PostAuction(parent)
         end
     end
 
-    print(("|cff00ffffVoidUI AH|r: Posting %d x %s at %s each (%s)..."):format(
+    print(("|cff00ffffVoidAH|r: Posting %d x %s at %s each (%s)..."):format(
         qty, itemName, VoidUI:FormatMoney(totalPrice), ({ "12h", "24h", "48h" })[duration] or tostring(duration)))
 
     -- Store pending post info for OnAuctionCreated to confirm
@@ -3273,7 +3441,7 @@ function BuildMyAuctionsTab(parent)
 
     local cancelAllBtn = CreateButton(parent, 100, 24, "|cffff4444Cancel All|r", function()
         -- Confirm before cancelling all
-        print("|cff00ffffVoidUI AH|r: Cancel All is not yet implemented for safety.")
+        print("|cff00ffffVoidAH|r: Cancel All is not yet implemented for safety.")
     end)
     cancelAllBtn:SetPoint("LEFT", refreshBtn, "RIGHT", 6, 0)
 
@@ -3347,7 +3515,7 @@ function BuildMyAuctionsTab(parent)
         cancelBtn:SetScript("OnLeave", function() cbg:SetColorTexture(0.4, 0.1, 0.1, 1) end)
         cancelBtn:SetScript("OnClick", function()
             if not row._auctionID then
-                print("|cffff6060[VoidUI AH]|r No auction ID on this row.")
+                print("|cffff6060[VoidAH]|r No auction ID on this row.")
                 return
             end
             -- CancelAuction is HasRestrictions: it must run inside THIS click, like
@@ -3357,7 +3525,7 @@ function BuildMyAuctionsTab(parent)
             local auctionID = row._auctionID
             if C_AuctionHouse.IsThrottledMessageSystemReady
                and not C_AuctionHouse.IsThrottledMessageSystemReady() then
-                print("|cffffaa00[VoidUI AH]|r Auction house is busy -- click Cancel again in a moment.")
+                print("|cffffaa00[VoidAH]|r Auction house is busy -- click Cancel again in a moment.")
                 return
             end
             do
@@ -3367,7 +3535,7 @@ function BuildMyAuctionsTab(parent)
                 -- needing a close/reopen. The re-query fires OWNED_AUCTIONS_UPDATED -> UpdateMyAuctions.
                 C_Timer.After(0.5, function() if AH.QueryOwnedAuctions then AH:QueryOwnedAuctions() end end)
             end
-            print("|cff00ff00[VoidUI AH]|r Cancelling auction...")
+            print("|cff00ff00[VoidAH]|r Cancelling auction...")
         end)
         row._cancelBtn = cancelBtn
 
@@ -3406,7 +3574,7 @@ local function UpdateMyAuctions()
         cancelBtn:SetScript("OnLeave", function() cbg:SetColorTexture(0.4, 0.1, 0.1, 1) end)
         cancelBtn:SetScript("OnClick", function()
             if not row._auctionID then
-                print("|cffff6060[VoidUI AH]|r No auction ID on this row.")
+                print("|cffff6060[VoidAH]|r No auction ID on this row.")
                 return
             end
             -- CancelAuction is HasRestrictions: it must run inside THIS click, like
@@ -3416,7 +3584,7 @@ local function UpdateMyAuctions()
             local auctionID = row._auctionID
             if C_AuctionHouse.IsThrottledMessageSystemReady
                and not C_AuctionHouse.IsThrottledMessageSystemReady() then
-                print("|cffffaa00[VoidUI AH]|r Auction house is busy -- click Cancel again in a moment.")
+                print("|cffffaa00[VoidAH]|r Auction house is busy -- click Cancel again in a moment.")
                 return
             end
             do
@@ -3426,7 +3594,7 @@ local function UpdateMyAuctions()
                 -- needing a close/reopen. The re-query fires OWNED_AUCTIONS_UPDATED -> UpdateMyAuctions.
                 C_Timer.After(0.5, function() if AH.QueryOwnedAuctions then AH:QueryOwnedAuctions() end end)
             end
-            print("|cff00ff00[VoidUI AH]|r Cancelling auction...")
+            print("|cff00ff00[VoidAH]|r Cancelling auction...")
         end)
         row._cancelBtn = cancelBtn
 
@@ -3573,7 +3741,7 @@ function FindDeals()
     local threshold = cfg.dealThreshold or 80
     local db = VoidUIAuctionDB and VoidUIAuctionDB[GetRealmName()]
     if not db then
-        print("|cff00ffffVoidUI AH|r: No price data. Run a scan first.")
+        print("|cff00ffffVoidAH|r: No price data. Run a scan first.")
         return
     end
 
@@ -3651,7 +3819,7 @@ function FindDeals()
         C_Timer.After(1, function() if parent:IsVisible() then PaintRows() end end)
     end
 
-    print("|cff00ffffVoidUI AH|r: Found " .. #dealResults .. " deals at <=" .. threshold .. "% of market." ..
+    print("|cff00ffffVoidAH|r: Found " .. #dealResults .. " deals at <=" .. threshold .. "% of market." ..
         (#dealResults == 0 and (" (Items need " .. AH.MIN_DEAL_DAYS .. " days of scans to judge a deal.)") or ""))
 end
 
@@ -3822,7 +3990,7 @@ function ResolveAndAddItem(text, thresholdCopper, parent)
             if itemName and itemID_out then
                 AddShoppingEntry(itemID_out, itemName, thresholdCopper, parent)
             else
-                print("|cff00ffffVoidUI AH|r: Could not resolve '" .. text .. "'. Try an item ID instead.")
+                print("|cff00ffffVoidAH|r: Could not resolve '" .. text .. "'. Try an item ID instead.")
             end
         end
     end
@@ -3835,7 +4003,7 @@ function AddShoppingEntry(itemID, name, thresholdCopper, parent)
     -- Dedup
     for _, entry in ipairs(cfg.shoppingList) do
         if entry.itemID == itemID then
-            print("|cff00ffffVoidUI AH|r: " .. name .. " is already on the shopping list.")
+            print("|cff00ffffVoidAH|r: " .. name .. " is already on the shopping list.")
             return
         end
     end
@@ -3856,7 +4024,7 @@ function AddShoppingEntry(itemID, name, thresholdCopper, parent)
     }
 
     local threshStr = thresholdCopper > 0 and VoidUI:FormatMoney(thresholdCopper) or "auto"
-    print("|cff00ffffVoidUI AH|r: Added " .. name .. " (threshold: " .. threshStr .. ")")
+    print("|cff00ffffVoidAH|r: Added " .. name .. " (threshold: " .. threshStr .. ")")
 
     if parent then UpdateShoppingList(parent) end
 end
@@ -3868,7 +4036,7 @@ function RemoveShoppingEntry(index, parent)
     if entry then
         local name = entry.itemName or "?"
         table.remove(cfg.shoppingList, index)
-        print("|cff00ffffVoidUI AH|r: Removed " .. name)
+        print("|cff00ffffVoidAH|r: Removed " .. name)
     end
     if parent then UpdateShoppingList(parent) end
 end
@@ -4000,7 +4168,7 @@ function StartShoppingListScan()
     end
 
     if count > 0 then
-        print("|cff00ffffVoidUI AH|r: Checking shopping list (" .. count .. " items)...")
+        print("|cff00ffffVoidAH|r: Checking shopping list (" .. count .. " items)...")
     end
 
     -- Safety timeout: if results never arrive, clean up after 30s.
@@ -4011,7 +4179,7 @@ function StartShoppingListScan()
         if shopQueryActive then
             shopQueryActive = false
             wipe(shopQueryPending)
-            print("|cff00ffffVoidUI AH|r: Shopping list scan timed out.")
+            print("|cff00ffffVoidAH|r: Shopping list scan timed out.")
         end
     end)
 end
@@ -4058,7 +4226,7 @@ end
 function FireShoppingAlert(name, price, threshold)
     local pct = threshold > 0 and math.floor((price / threshold) * 100) or 0
     local msg = name .. " is " .. VoidUI:FormatMoney(price) .. " (" .. pct .. "% of threshold)"
-    print("|cff00ff00VoidUI AH DEAL|r: " .. msg)
+    print("|cff00ff00VoidAH DEAL|r: " .. msg)
 
     local cfg = VoidUI:GetModuleConfig("Auction")
     if cfg.shopAlertRaidWarning then
@@ -4073,9 +4241,9 @@ function CheckShoppingScanComplete()
     shopQueryActive = false
     local count = #shopAlertResults
     if count > 0 then
-        print("|cff00ffffVoidUI AH|r: Shopping scan complete — |cff00ff00" .. count .. " deal(s) found!|r")
+        print("|cff00ffffVoidAH|r: Shopping scan complete — |cff00ff00" .. count .. " deal(s) found!|r")
     else
-        print("|cff00ffffVoidUI AH|r: Shopping scan complete — no deals below threshold.")
+        print("|cff00ffffVoidAH|r: Shopping scan complete — no deals below threshold.")
     end
 
     -- Refresh UI if scan tab is open
@@ -4247,9 +4415,11 @@ function AH:OnAHShow()
     UpdateStatusBar()
     UpdateScanProgress()
 
-    -- Auto-scan shopping list after a short delay
+    -- Auto-scan shopping list after a short delay (this AH session only: a quick
+    -- close + reopen must not start two scans)
+    local mySession = ahSessionID
     C_Timer.After(1.5, function()
-        if AH.ahOpen then
+        if AH.ahOpen and mySession == ahSessionID then
             StartShoppingListScan()
         end
     end)
@@ -4274,14 +4444,17 @@ function ApplySellLivePrice(parent, perUnit)
     local cfg = VoidUI:GetModuleConfig("Auction")
     local pct = tonumber(cfg.undercutPercent)
     local price
-    if pct and pct > 0 then
+    if pct and pct >= 0 then   -- 0% = match the market (the % box allows it)
         price = ToSilver(perUnit * (1 - pct / 100))
     else
         price = ToSilver(perUnit - (cfg.undercutCopper or 100))
     end
-    parent._goldBox:SetText(tostring(math.floor(price / 10000)))
-    parent._silverBox:SetText(tostring(math.floor((price % 10000) / 100)))
-    parent._copperBox:SetText(tostring(price % 100))
+    -- Never replace a price the player typed while the search was in flight.
+    if not sellPending._priceEdited then
+        parent._goldBox:SetText(tostring(math.floor(price / 10000)))
+        parent._silverBox:SetText(tostring(math.floor((price % 10000) / 100)))
+        parent._copperBox:SetText(tostring(price % 100))
+    end
     parent._sellInfo:SetText((sellPending._baseInfo or "") ..
         " | |cff00ff00Current: " .. VoidUI:FormatMoney(perUnit) .. "|r")
 end
@@ -4350,11 +4523,13 @@ function AH:OnItemSearchResults(itemKey)
                     timeLeft = r.timeLeft,
                     containsAccountItem = r.containsAccountItem,
                     containsOwnerItem = r.containsOwnerItem,
+                    variant = AuctionVariant(r.itemLink),
                 }
             end
         end
         browseOffset = 0
         RefreshBrowseRows()
+        ContinueMultiBuy()   -- buying several from a grouped row: on to the next auction
         -- Don't return — also let sell tab update if applicable
     end
 
@@ -4452,7 +4627,7 @@ function AH:OnOwnedAuctionsUpdated()
 end
 
 function AH:OnAuctionCreated()
-    print("|cff00ff00VoidUI AH|r: Auction posted successfully!")
+    print("|cff00ff00VoidAH|r: Auction posted successfully!")
 
     -- Update Recent Posts (server-confirmed)
     if tabFrames and tabFrames[2] and sellPending._lastPostName then
@@ -4534,18 +4709,20 @@ function AH:OnCommodityPriceUnavailable()
     if not pendingCommodityPurchase then return end
     pendingCommodityPurchase = nil
     HideConfirmBar()
-    print("|cffff4444[VoidUI AH]|r Not enough listed at that price any more -- try a smaller quantity.")
+    print("|cffff4444[VoidAH]|r Not enough listed at that price any more -- try a smaller quantity.")
 end
 
 function AH:OnCommodityPurchaseSucceeded()
     pendingCommodityPurchase = nil
     HideConfirmBar()
-    print("|cff00ff00[VoidUI AH]|r Purchase successful!")
-    -- Refresh listings
+    print("|cff00ff00[VoidAH]|r Purchase successful!")
+    -- Refresh listings (re-checked when the timer fires: Back clears buyItemKey)
     if buyItemKey and browseView == BROWSE_VIEW_LISTINGS then
         C_Timer.After(0.5, function()
+            local key = buyItemKey
+            if not key or browseView ~= BROWSE_VIEW_LISTINGS then return end
             AH:_Enqueue(function()
-                C_AuctionHouse.SendSearchQuery(buyItemKey,
+                C_AuctionHouse.SendSearchQuery(key,
                     {{ sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort = false }}, false)
             end)
         end)
@@ -4555,7 +4732,7 @@ end
 function AH:OnCommodityPurchaseFailed()
     pendingCommodityPurchase = nil
     HideConfirmBar()
-    print("|cffff4444[VoidUI AH]|r Purchase failed! Price may have changed.")
+    print("|cffff4444[VoidAH]|r Purchase failed! Price may have changed.")
 end
 
 ----------------------------------------------------------------------
@@ -4586,7 +4763,8 @@ local function HookBagClicks()
             if not itemLink then return end
             local itemID = C_Item.GetItemInfoInstant(itemLink)
             if not itemID then return end
-            for bag = 0, 4 do
+            -- 0-4 = backpack + bags, then the reagent bag (5)
+            for bag = 0, (Enum.BagIndex and Enum.BagIndex.ReagentBag) or 5 do
                 for slot = 1, C_Container.GetContainerNumSlots(bag) do
                     local info = C_Container.GetContainerItemInfo(bag, slot)
                     if info and info.itemID == itemID then
@@ -4686,7 +4864,7 @@ browseEventFrame:SetScript("OnEvent", function(self, event, ...)
 end)
 
 ----------------------------------------------------------------------
--- Professions Tab — leveling shopping lists from wow-professions.com
+-- Professions Tab — leveling shopping lists
 ----------------------------------------------------------------------
 function BuildProfessionsTab(parent)
     local plans = VoidUI.ProfessionPlans or {}
@@ -4697,7 +4875,9 @@ function BuildProfessionsTab(parent)
         local info = {}
         if not GetProfessions then return info end
         local prof1, prof2, archaeology, fishing, cooking = GetProfessions()
-        for _, idx in ipairs({ prof1, prof2, archaeology, fishing, cooking }) do
+        local list = { prof1, prof2, archaeology, fishing, cooking }
+        for i = 1, 5 do   -- not ipairs: missing professions are nil holes
+            local idx = list[i]
             if idx then
                 local name, _, rank, maxRank = GetProfessionInfo(idx)
                 if name then info[name] = { rank = rank or 0, maxRank = maxRank or 100 } end
@@ -4747,7 +4927,7 @@ function BuildProfessionsTab(parent)
     VoidUI:SetFont(subtitle, 9, "")
     subtitle:SetPoint("TOPLEFT", 16, -32)
     subtitle:SetTextColor(0.55, 0.55, 0.6)
-    subtitle:SetText("Data from wow-professions.com (checked for 12.1.5). Click a row to search the AH or add to your Shopping List.")
+    subtitle:SetText("Leveling lists (checked for 12.1.5). Click a row to search the AH or add to your Shopping List.")
 
     local leftPane = CreateFrame("Frame", nil, parent, "BackdropTemplate")
     leftPane:SetPoint("TOPLEFT", 16, -56)

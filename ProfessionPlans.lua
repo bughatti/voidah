@@ -2,8 +2,8 @@
 -- VoidUI ProfessionPlans
 --
 -- Bundled leveling material lists for Midnight professions (checked
--- against the live guides 2026-10-23, patch 12.1.5 -- unchanged since 12.0.5),
--- sourced from wow-professions.com leveling guides. Each plan is a
+-- 2026-10-23, patch 12.1.5 -- unchanged since 12.0.5), adapted from
+-- community leveling guides. Each plan is a
 -- list of { qty, name } pairs that the AuctionUI Professions tab
 -- can load into the Shopping List or buy directly from the AH.
 ----------------------------------------------------------------------

@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.1] — 2026-10-27
+
+### Added
+- **Buy several at once from a grouped row.** Rows like "Qty 15" of a bag are separate auctions. The buy bar now asks how many, then Confirm Buy steps through them one click each (the game allows one auction per click), never above the price you started at and only the same version of the item (same sockets, stats or pet level). It reports how many went through.
+
+### Fixed
+- **Market price** is the cheapest listing again, so the Sell tab's undercut starts from the real low price.
+- **Scans.** Aborting a scan can't make the next one skip ahead, a category that fails moves on instead of stalling, and queued requests no longer get stuck.
+- **Sell tab.** A price you type is kept. A 0% undercut posts at market everywhere. Similar sell rows are re-checked after merging.
+- **Shopping list** scans once per click, and Back works after buying a commodity.
+- **Professions tab** stars Cooking when you know it, not just your two main professions.
+- **Caged battle pets** show their real name and icon.
+- Chat messages say "VoidAH" instead of the old "VoidUI AH".
+
 ## [1.3.0] — 2026-10-24
 
 ### Added
@@ -148,7 +162,7 @@ Initial CurseForge release.
 - **My Auctions**: active listings with cancel buttons
 - **Deals**: auto-flags underpriced listings vs your scanned price database
 - **Scan**: full/browse scan engine with throttle + progress bar, persistent realm price DB, Shopping List with per-row Buy button
-- **Professions** tab: bundled wow-professions.com leveling shopping lists for 9 crafting professions (Cooking, Alchemy, JC, BS, Tailoring, LW, Engineering, Inscription, Enchanting) with [Buy] buttons routing to Browse + buy-target banner with live bag-count tracking, [+ List] buttons that add itemIDs to the Shopping List
+- **Professions** tab: bundled leveling shopping lists for 9 crafting professions (Cooking, Alchemy, JC, BS, Tailoring, LW, Engineering, Inscription, Enchanting) with [Buy] buttons routing to Browse + buy-target banner with live bag-count tracking, [+ List] buttons that add itemIDs to the Shopping List
 
 ### WoW 12.0.5 (Midnight) compatibility
 - Uses public `C_AuctionHouse` APIs throughout

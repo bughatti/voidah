@@ -74,7 +74,7 @@ local throttleReady = true
 local function SafeCall(func, ...)
     local ok, err = pcall(func, ...)
     if not ok then
-        print("|cffff0000VoidUI AH callback error:|r " .. tostring(err))
+        print("|cffff0000VoidAH callback error:|r " .. tostring(err))
     end
 end
 
@@ -242,12 +242,14 @@ function AH:_TryDequeue()
         self._inFlight = func
         local ok, err = pcall(func)
         if not ok then
-            print("|cffff0000VoidUI AH|r: Throttle error: " .. tostring(err))
+            print("|cffff0000VoidAH|r: Throttle error: " .. tostring(err))
             throttleReady = true
             -- continue loop to try the next item
-        else
+        elseif not throttleReady then
             break  -- wait for throttle event before next dequeue
         end
+        -- (A func that uses no throttle slot -- ReplicateItems -- sets throttleReady
+        -- back itself; no event will follow, so keep draining.)
     end
 end
 
@@ -292,16 +294,16 @@ end
 ----------------------------------------------------------------------
 function AH:StartFullScan()
     if not self.ahOpen then
-        print("|cff00ffffVoidUI AH|r: Auction house not open.")
+        print("|cff00ffffVoidAH|r: Auction house not open.")
         return false
     end
     if not self:CanFullScan() then
         local left = self:FullScanCooldownLeft()
-        print("|cff00ffffVoidUI AH|r: Full scan on cooldown (" .. VoidUI:FormatTime(left) .. " left).")
+        print("|cff00ffffVoidAH|r: Full scan on cooldown (" .. VoidUI:FormatTime(left) .. " left).")
         return false
     end
     if self.scanning then
-        print("|cff00ffffVoidUI AH|r: Scan already in progress.")
+        print("|cff00ffffVoidAH|r: Scan already in progress.")
         return false
     end
 
@@ -311,6 +313,7 @@ function AH:StartFullScan()
     self.scanTotal = 0
     self.scanProcessed = 0
     self._scanMin = {}   -- this scan's lowest per-unit buyout per item (applied at finish)
+    self._scanGen = (self._scanGen or 0) + 1   -- delayed callbacks of an older scan check this
 
     self:_Enqueue(function()
         VoidUIAuctionDB._lastReplicateCall = time()
@@ -328,7 +331,7 @@ function AH:StartFullScan()
                 self.scanning = false
                 self.scanType = nil
                 self._scanMin = nil
-                print("|cff00ffffVoidUI AH|r: Full scan got no data from Blizzard (it allows one every 15 min). Try again later.")
+                print("|cff00ffffVoidAH|r: Full scan got no data from Blizzard (it allows one every 15 min). Try again later.")
                 if AH.OnScanComplete then SafeCall(AH.OnScanComplete, AH, "full") end
             end
         end)
@@ -378,7 +381,9 @@ function AH:_ProcessReplicateBatch(startIndex, totalCount)
     if AH.OnScanProgress then SafeCall(AH.OnScanProgress, AH, self.scanProgress) end
 
     if endIndex < totalCount - 1 then
+        local gen = self._scanGen
         C_Timer.After(BATCH_INTERVAL, function()
+            if self._scanGen ~= gen then return end   -- that scan was aborted/replaced
             self:_ProcessReplicateBatch(endIndex + 1, totalCount)
         end)
     else
@@ -401,8 +406,9 @@ function AH:_FinishFullScan()
     throttleReady = true
     if not VoidUIAuctionDB then VoidUIAuctionDB = {} end
     VoidUIAuctionDB._lastFullScan = time()
-    print("|cff00ffffVoidUI AH|r: Full scan complete. " .. self.scanProcessed .. " listings processed, " .. self:GetDBStats() .. " items in DB.")
+    print("|cff00ffffVoidAH|r: Full scan complete. " .. self.scanProcessed .. " listings processed, " .. self:GetDBStats() .. " items in DB.")
     if AH.OnScanComplete then SafeCall(AH.OnScanComplete, AH, "full") end
+    self:_TryDequeue()   -- anything queued meanwhile would otherwise wait for an event that may not come
 end
 
 ----------------------------------------------------------------------
@@ -412,11 +418,11 @@ local BROWSE_SCAN_CATEGORIES = { 2, 4, 0, 7, 3, 8, 9, 1, 15, 5, 16, 17 }
 
 function AH:StartBrowseScan()
     if not self.ahOpen then
-        print("|cff00ffffVoidUI AH|r: Auction house not open.")
+        print("|cff00ffffVoidAH|r: Auction house not open.")
         return false
     end
     if self.scanning then
-        print("|cff00ffffVoidUI AH|r: Scan already in progress.")
+        print("|cff00ffffVoidAH|r: Scan already in progress.")
         return false
     end
 
@@ -428,6 +434,7 @@ function AH:StartBrowseScan()
     self._browseCatIndex = 0
     self._browseCatItems = 0
     self._browsePageCount = 0
+    self._scanGen = (self._scanGen or 0) + 1   -- delayed callbacks of an older scan check this
 
     if AH.OnScanStart then SafeCall(AH.OnScanStart, AH, "browse") end
     self:_ScanNextCategory()
@@ -450,7 +457,7 @@ function AH:_ScanNextCategory()
     self.scanProgress = (self._browseCatIndex - 1) / self.scanTotal
     if AH.OnScanProgress then SafeCall(AH.OnScanProgress, AH, self.scanProgress) end
 
-    print("|cff00ffffVoidUI AH|r: Scanning " .. self._browseCatIndex .. "/" .. self.scanTotal .. ": " .. catName)
+    print("|cff00ffffVoidAH|r: Scanning " .. self._browseCatIndex .. "/" .. self.scanTotal .. ": " .. catName)
 
     self:_Enqueue(function()
         C_AuctionHouse.SendBrowseQuery({
@@ -466,23 +473,30 @@ function AH:_ProcessBrowseResults()
     local results = C_AuctionHouse.GetBrowseResults()
     if not results then return end
 
+    -- One itemID can have several result rows (item levels, variants); the price
+    -- is the cheapest of them, not whichever row came last.
+    local cheapest = {}
     for _, result in ipairs(results) do
         if result.itemKey and result.minPrice then
             local itemID = AH.SafeNum(result.itemKey.itemID)
             local price = AH.SafeNum(result.minPrice)
-            if itemID and price and price > 0 then
-                self:SetPrice(itemID, price)
+            if itemID and price and price > 0 and (not cheapest[itemID] or price < cheapest[itemID]) then
+                cheapest[itemID] = price
             end
         end
+    end
+    for itemID, price in pairs(cheapest) do
+        self:SetPrice(itemID, price)
     end
 
     self._browseCatItems = #results
     self._browsePageCount = (self._browsePageCount or 0) + 1
 
+    local gen = self._scanGen
     if not C_AuctionHouse.HasFullBrowseResults() then
         -- Extra delay between pages to avoid rate limiting
         C_Timer.After(PAGE_DELAY, function()
-            if not self.scanning then return end
+            if not self.scanning or self._scanGen ~= gen then return end
             self:_Enqueue(function()
                 C_AuctionHouse.RequestMoreBrowseResults()
             end)
@@ -497,13 +511,23 @@ function AH:_ProcessBrowseResults()
         if self._browseCatIndex < #BROWSE_SCAN_CATEGORIES then
             -- Delay before next category
             C_Timer.After(CATEGORY_DELAY, function()
-                if not self.scanning then return end
+                if not self.scanning or self._scanGen ~= gen then return end
                 self:_ScanNextCategory()
             end)
         else
             self:_FinishBrowseScan()
         end
     end
+end
+
+-- A failed category query delivers no results, so nothing would advance the scan
+-- and AH.scanning would block every later scan. Move on to the next category.
+function AH:_OnBrowseScanFailure()
+    local gen = self._scanGen
+    C_Timer.After(CATEGORY_DELAY, function()
+        if not self.scanning or self.scanType ~= "browse" or self._scanGen ~= gen then return end
+        self:_ScanNextCategory()
+    end)
 end
 
 function AH:_FinishBrowseScan()
@@ -514,7 +538,7 @@ function AH:_FinishBrowseScan()
     throttleReady = true
     if not VoidUIAuctionDB then VoidUIAuctionDB = {} end
     VoidUIAuctionDB._lastBrowseScan = time()
-    print("|cff00ffffVoidUI AH|r: Browse scan complete. " .. totalItems .. " items across " .. #BROWSE_SCAN_CATEGORIES .. " categories, " .. self:GetDBStats() .. " items in DB.")
+    print("|cff00ffffVoidAH|r: Browse scan complete. " .. totalItems .. " items across " .. #BROWSE_SCAN_CATEGORIES .. " categories, " .. self:GetDBStats() .. " items in DB.")
     if AH.OnScanComplete then SafeCall(AH.OnScanComplete, AH, "browse") end
 end
 
@@ -558,8 +582,9 @@ function AH:AbortScan()
         self.scanning = false
         self.scanType = nil
         self._processingBatch = false
+        self._scanGen = (self._scanGen or 0) + 1   -- orphan this scan's pending timers
         self:ClearThrottleQueue()
-        print("|cff00ffffVoidUI AH|r: Scan aborted.")
+        print("|cff00ffffVoidAH|r: Scan aborted.")
         if AH.OnScanComplete then SafeCall(AH.OnScanComplete, AH, "aborted") end
     end
 end
@@ -607,6 +632,7 @@ function mod:Init()
     eventFrame:RegisterEvent("REPLICATE_ITEM_LIST_UPDATE")
     eventFrame:RegisterEvent("AUCTION_HOUSE_BROWSE_RESULTS_UPDATED")
     eventFrame:RegisterEvent("AUCTION_HOUSE_BROWSE_RESULTS_ADDED")
+    eventFrame:RegisterEvent("AUCTION_HOUSE_BROWSE_FAILURE")
     eventFrame:RegisterEvent("AUCTION_HOUSE_THROTTLED_SYSTEM_READY")
     eventFrame:RegisterEvent("ITEM_SEARCH_RESULTS_UPDATED")
     eventFrame:RegisterEvent("COMMODITY_SEARCH_RESULTS_UPDATED")
@@ -681,6 +707,11 @@ function mod:OnEvent(event, ...)
             AH:_ProcessBrowseResults()
         end
 
+    elseif event == "AUCTION_HOUSE_BROWSE_FAILURE" then
+        if AH.scanning and AH.scanType == "browse" then
+            AH:_OnBrowseScanFailure()
+        end
+
     elseif event == "AUCTION_HOUSE_THROTTLED_SYSTEM_READY" then
         AH:_OnThrottleReady()
 
@@ -703,10 +734,10 @@ function mod:OnEvent(event, ...)
         local err = ...
         local text = AuctionHouseUtil and AuctionHouseUtil.GetErrorText
             and AuctionHouseUtil.GetErrorText(err) or ("error " .. tostring(err))
-        print("|cffff4444VoidUI AH|r: The auction house said: " .. tostring(text))
+        print("|cffff4444VoidAH|r: The auction house said: " .. tostring(text))
 
     elseif event == "AUCTION_HOUSE_POST_ERROR" then
-        print("|cffff4444VoidUI AH|r: The auction house rejected that post" ..
+        print("|cffff4444VoidAH|r: The auction house rejected that post" ..
             (AUCTION_POSTING_ERROR_TEXT and (": " .. AUCTION_POSTING_ERROR_TEXT) or "."))
 
     elseif event == "COMMODITY_PRICE_UNAVAILABLE" then

@@ -63,7 +63,7 @@ You rarely need it — VoidAH opens automatically when you talk to an Auctioneer
 
 ## Good to Know
 
-- **Profession lists** are adapted from [wow-professions.com](https://www.wow-professions.com/) guides (credit to their authors) and checked against in-game recipes. Quantities include a buffer so you don't run short. Gathering professions are left out — you gather those, not buy them.
+- **Profession lists** are adapted from community leveling guides and checked against in-game recipes. Quantities include a buffer so you don't run short. Gathering professions are left out — you gather those, not buy them.
 - Your price history is shared with **VoidBags**, which uses it to spot items worth selling.
 
 ---
