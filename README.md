@@ -36,10 +36,20 @@ VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Se
 - A **shopping list** with a Buy button on every row — survives reloads
 
 ### Professions
-- **Leveling plans** for Cooking, Alchemy, Jewelcrafting, Blacksmithing, Tailoring, Leatherworking, Engineering, Inscription, and Enchanting
-- Each plan shows the **trainer location**, notes, the leveling steps with skill ranges, and the full material list
+- **The cheapest leveling path from your own skill** for Cooking, Alchemy, Jewelcrafting, Blacksmithing, Tailoring, Leatherworking, Engineering, Inscription and Enchanting, worked out live when you pick one
+- **Built from the game's own recipe data**: when each recipe turns yellow and grey and how many points it gives. Each craft is the recipe with the lowest cost per expected skill point, using the odds of a skill-up as recipes fade from yellow to grey
+- **Your prices**: your Auction House scan, vendor prices from merchants you've visited, else the game's listed price (marked "est.")
+- **Recipes you know come first.** Where none of them gives skill, it picks the cheapest one you don't know yet and flags it NOT LEARNED
+- **Reads your real skill** for each expansion's tier (Midnight Alchemy, not your old Legion Alchemy). Open the profession window once and it remembers your recipes
+- The steps with skill ranges and craft counts, and the full material list with prices
 - **Buy** jumps to Browse with the item selected and shows a banner that tracks your progress (e.g. "47 / 200 in bags")
 - **+ List** adds the material to your shopping list on the Scan tab
+
+### VoidGear suggestions (optional)
+- With **VoidGear** installed, the shopping list on the Scan tab gets a **"VoidGear suggestions"** section: the enchants, gems and consumables VoidGear's Prep tab says you need, each with a price and a Buy button
+- **It keeps itself current**: buy it, put it on, and the row drops off by itself. It waits for a scan to finish instead of flickering while prices come in
+- VoidGear's own **Search AH** button searches right here in VoidAH's Browse tab
+- Without VoidGear, VoidAH works exactly the same; the section just isn't there
 
 ---
 
@@ -63,7 +73,8 @@ You rarely need it — VoidAH opens automatically when you talk to an Auctioneer
 
 ## Good to Know
 
-- **Profession lists** are adapted from community leveling guides and checked against in-game recipes. Quantities include a buffer so you don't run short. Gathering professions are left out — you gather those, not buy them.
+- **Profession plans** come from the game's own recipe tables and your own prices. Skill-ups past yellow are a chance, so counts are what you can expect, not a guarantee. Gathering professions are left out: you gather those, not buy them (VoidGather shows where your skill-up nodes are).
+- **For the best prices,** run a full scan first, and open each profession window once so VoidAH knows your recipes.
 - Your price history is shared with **VoidBags**, which uses it to spot items worth selling.
 
 ---

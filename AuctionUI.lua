@@ -116,6 +116,17 @@ local function CaptureTradeSkillSnapshot()
     cache.skillRank    = prof.skillLevel or 0
     cache.skillMaxRank = prof.maxSkillLevel or 100
 
+    -- Skill per expansion line (Midnight Alchemy 51/100, Khaz Algar ...): the
+    -- base numbers above can belong to another line (the tab showed 100/75 for a
+    -- 51/100 Midnight Alchemy, 2026-10-30). The planner reads its own line here.
+    cache.tiers = {}
+    local okKids, kids = pcall(C_TradeSkillUI.GetChildProfessionInfos)
+    for _, k in ipairs(okKids and kids or {}) do
+        if k.professionID and (k.maxSkillLevel or 0) > 0 then
+            cache.tiers[k.professionID] = { skill = k.skillLevel or 0, max = k.maxSkillLevel }
+        end
+    end
+
     for _, rID in ipairs(recipeIDs) do
         local rInfo = C_TradeSkillUI.GetRecipeInfo(rID)
         if rInfo and rInfo.learned then
@@ -4253,6 +4264,163 @@ function CheckShoppingScanComplete()
 end
 
 ----------------------------------------------------------------------
+-- VoidGear suggestions: when VoidGear is loaded, what its Prep tab says to buy
+-- (enchants, gems, consumables for your spec) shows under your own list, with
+-- the same price and Buy jump. VoidAH never needs VoidGear: without it this
+-- section simply isn't built. VoidGear.Prep:GetShoppingList() returns
+-- { { id, count, have, consumable }, ... } or nil.
+----------------------------------------------------------------------
+local VG_ROWS = 11
+local VG_TOP = -66 - 10 * 20 - 10   -- under the 10 shopping-list rows
+
+-- The list is worked out ONCE per Auction House visit / finished scan, not on
+-- every redraw: the shopping list redraws on every scan-progress tick, and
+-- re-running VoidGear each time made the rows flicker while prices filled in
+-- (seen 2026-10-30). While a scan or the shopping-list price check runs, the
+-- section just says it's waiting.
+local vgSnapshot          -- { list = {...}, mode = "Best"|"Budget" } or nil = work it out next time
+local vgSnapshotKey       -- AH visit + spec + Best/Budget it was made for
+
+-- Your gear or bags changed (an enchant or gem put on, something bought): work
+-- the list out again. Without this, items you'd bought and used still showed
+-- as needed until the next scan (2026-10-30). Batched: one redraw per burst.
+local vgDirtyPending = false
+local vgWatch = CreateFrame("Frame")
+vgWatch:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+vgWatch:RegisterEvent("BAG_UPDATE_DELAYED")
+vgWatch:RegisterUnitEvent("UNIT_INVENTORY_CHANGED", "player")
+vgWatch:SetScript("OnEvent", function()
+    vgSnapshot = nil
+    if vgDirtyPending then return end
+    vgDirtyPending = true
+    C_Timer.After(0.5, function()
+        vgDirtyPending = false
+        local scanTab = tabFrames and tabFrames[5]
+        if scanTab and scanTab:IsVisible() then UpdateShoppingList(scanTab) end
+    end)
+end)
+
+local function VoidGearPrep()
+    local vg = _G.VoidGear
+    return vg and vg.Prep and vg.Prep.GetShoppingList and vg.Prep or nil
+end
+
+-- Jump to Browse and search an item by name (same as the shopping list's Buy).
+local function BuyByName(name)
+    if not AH or not AH.ahOpen then
+        print("|cff00c7ffVoidAH|r: Open the Auction House first.")
+        return
+    end
+    currentBuyTarget = nil
+    if SetActiveTab then SetActiveTab(1) end
+    if tabFrames and tabFrames[1] and tabFrames[1]._searchBox then
+        tabFrames[1]._searchBox:SetText(name or "")
+    end
+    if BrowseSearch then BrowseSearch(name or "") end
+    if VoidAH_UpdateBuyTargetBanner then VoidAH_UpdateBuyTargetBanner() end
+end
+-- For other addons (VoidGear's Prep tab "Search AH"): search an item by name in
+-- VoidAH's Browse tab. Blizzard's own AH window is hidden while VoidAH's is up,
+-- so filling Blizzard's search box there did nothing you could see.
+VoidAH_SearchItem = BuyByName
+
+local function UpdateVoidGearSuggestions(parent)
+    local prep = VoidGearPrep()
+    if not prep then return end
+    if not parent._vgRows then
+        local head = parent:CreateFontString(nil, "OVERLAY")
+        VoidUI:SetFont(head, 11, "OUTLINE")
+        head:SetPoint("TOPLEFT", 480, VG_TOP)
+        parent._vgHead = head
+        parent._vgRows = {}
+        for i = 1, VG_ROWS do
+            local row = CreateFrame("Frame", nil, parent)
+            row:SetSize(380, 18)
+            row:SetPoint("TOPLEFT", 480, VG_TOP - 20 - (i - 1) * 20)
+            local fs = row:CreateFontString(nil, "OVERLAY")
+            VoidUI:SetFont(fs, 9, "")
+            fs:SetPoint("LEFT", 0, 0)
+            fs:SetWidth(310)
+            fs:SetJustifyH("LEFT")
+            fs:SetWordWrap(false)
+            row._text = fs
+            row._buyBtn = CreateButton(row, 44, 18, "|cff00ff00Buy|r", nil)
+            row._buyBtn:SetPoint("RIGHT", row, "RIGHT", 0, 0)
+            row:Hide()
+            parent._vgRows[i] = row
+        end
+    end
+
+    local busy = (AH.scanning) or shopQueryActive
+    if busy then
+        parent._vgHead:SetText("|cff00ffffVoidGear suggestions|r  |cff888888waiting for the scan to finish...|r")
+        for i = 1, VG_ROWS do parent._vgRows[i]:Hide() end
+        vgSnapshot = nil   -- prices are changing: work it out again afterwards
+        return
+    end
+    -- a new AH visit, another spec or a Best/Budget switch in VoidGear: new list
+    local specIdx = GetSpecialization and GetSpecialization() or 0
+    local modeNow = (prep.GetMode and prep:GetMode() == "budget") and "Budget" or "Best"
+    local key = ahSessionID .. ":" .. specIdx .. ":" .. modeNow
+    if not vgSnapshot or vgSnapshotKey ~= key then
+        local ok, l = pcall(prep.GetShoppingList, prep)
+        if not ok or not l then
+            -- not ready (no data for this spec, or still loading): say so, try again next redraw
+            parent._vgHead:SetText("|cff00ffffVoidGear suggestions|r  |cff888888not available for this spec yet|r")
+            for i = 1, VG_ROWS do parent._vgRows[i]:Hide() end
+            vgSnapshot = nil
+            return
+        end
+        -- only what's still to buy (a gem you already carry enough of isn't)
+        local todo = {}
+        for _, e in ipairs(l) do
+            if e.consumable or (e.count or 1) - (e.have or 0) > 0 then todo[#todo + 1] = e end
+        end
+        vgSnapshot, vgSnapshotKey = { list = todo, mode = modeNow }, key
+    end
+    local list, mode = vgSnapshot.list, vgSnapshot.mode
+    parent._vgHead:SetText(("|cff00ffffVoidGear suggestions|r  |cff888888(%s -- set in VoidGear's Prep tab)|r"):format(mode))
+    if #list == 0 then
+        parent._vgHead:SetText("|cff00ffffVoidGear suggestions|r  |cff66ff66nothing to buy|r")
+    end
+
+    for i = 1, VG_ROWS do
+        local row = parent._vgRows[i]
+        local e = list[i]
+        if i == VG_ROWS and #list > VG_ROWS then
+            row._text:SetText(("|cff888888+%d more in VoidGear's Prep tab (/vgear prep)|r"):format(#list - VG_ROWS + 1))
+            row._buyBtn:Hide()
+            row:Show()
+        elseif e then
+            local name = C_Item.GetItemNameByID(e.id)
+            if not name then C_Item.RequestLoadItemDataByID(e.id) end
+            local price = AH:GetPrice(e.id)
+            local priceStr = price and VoidUI:FormatMoney(price) or "|cff888888no price yet|r"
+            local what
+            if e.consumable then
+                what = (name or "?") .. "  |cff888888(none in bags)|r"
+            else
+                local need = math.max((e.count or 1) - (e.have or 0), 0)
+                what = ("%dx %s"):format(need, name or "?")
+            end
+            row._text:SetText(what .. " -- " .. priceStr)
+            row._buyBtn:SetScript("OnClick", function()
+                local n = C_Item.GetItemNameByID(e.id) or name
+                if not n then   -- item data still loading: an empty search would list everything
+                    C_Item.RequestLoadItemDataByID(e.id)
+                    return
+                end
+                BuyByName(n)
+            end)
+            row._buyBtn:Show()
+            row:Show()
+        else
+            row:Hide()
+        end
+    end
+end
+
+----------------------------------------------------------------------
 -- Shopping List: UI display
 ----------------------------------------------------------------------
 function UpdateShoppingList(parent)
@@ -4305,6 +4473,7 @@ function UpdateShoppingList(parent)
             row:Hide()
         end
     end
+    UpdateVoidGearSuggestions(parent)
 end
 
 ----------------------------------------------------------------------
@@ -4921,13 +5090,13 @@ function BuildProfessionsTab(parent)
     local title = parent:CreateFontString(nil, "OVERLAY")
     VoidUI:SetFont(title, 13, "OUTLINE")
     title:SetPoint("TOPLEFT", 16, -14)
-    title:SetText("|cff00c7ffProfession Leveling Plans|r — |A:auctionhouse-icon-favorite:12:12|a = your active profession")
+    title:SetText("|cff00c7ffProfession Leveling|r — |A:auctionhouse-icon-favorite:12:12|a = your active profession")
 
     local subtitle = parent:CreateFontString(nil, "OVERLAY")
     VoidUI:SetFont(subtitle, 9, "")
     subtitle:SetPoint("TOPLEFT", 16, -32)
     subtitle:SetTextColor(0.55, 0.55, 0.6)
-    subtitle:SetText("Leveling lists (checked for 12.1.5). Click a row to search the AH or add to your Shopping List.")
+    subtitle:SetText("The cheapest path from your skill, priced from your Auction House data. Click a row to search the AH or add to your Shopping List.")
 
     local leftPane = CreateFrame("Frame", nil, parent, "BackdropTemplate")
     leftPane:SetPoint("TOPLEFT", 16, -56)
@@ -5013,7 +5182,18 @@ function BuildProfessionsTab(parent)
             maxRank = cache.skillMaxRank or maxRank
         end
 
+        -- The plan itself is worked out now, from your skill, the recipes you know
+        -- and your prices (ProfessionPlans.lua).
+        if VoidUI.BuildProfessionPlan then plan = VoidUI.BuildProfessionPlan(plan, rank) or plan end
+        if plan.skillLevel then rank, maxRank = plan.skillLevel, plan.maxSkillLevel or maxRank end
+        -- this expansion's skill unknown: the plan starts at 1, so the base
+        -- profession's rank (maybe an old expansion's 100) mustn't tick steps off
+        if plan.skillUnknown then rank = 0 end
+
         local skillSuffix = profInfo and string.format("  |cffffffffYour skill: %d / %d|r", rank, maxRank) or "  |cff888888(not learned)|r"
+        if profInfo and plan.skillUnknown then
+            skillSuffix = "  |cffff8800Your skill: open your " .. plan.skill .. " window once|r"
+        end
         local star = profInfo and "|A:auctionhouse-icon-favorite:12:12|a " or ""
         local cacheNote = ""
         if cache then
@@ -5128,7 +5308,7 @@ function BuildProfessionsTab(parent)
             local c = (i % 2 == 0) and 0.07 or 0.04
             row._bg:SetColorTexture(c, c, c, 0.7)
             row._qtyLbl:SetText(mat[1] .. "x")
-            row._nameLbl:SetText(mat[2])
+            row._nameLbl:SetText(mat[2] .. (mat[4] and ("  |cff888888" .. mat[4] .. "|r") or ""))
 
             local itemName = mat[2]
             local itemID   = mat[3]  -- optional — preferred for shopping list resolution

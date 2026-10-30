@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.4.0] — 2026-10-30
+
+### Changed
+- **Professions tab rebuilt.** Each plan is now the cheapest leveling path from your own skill, worked out live from the game's recipe data and your own prices (your AH scan, vendor prices from merchants you visited, else the listed price marked "est."). Recipes you know come first; when none of them gives skill, the cheapest one you don't know yet is shown and flagged NOT LEARNED. Skill-up odds past yellow are counted in.
+- **Your real skill per expansion.** The plan reads Midnight Alchemy, not your old Legion Alchemy, and remembers your recipes once you open the profession window.
+
+### Added
+- **VoidGear suggestions** on the Scan tab's shopping list (when VoidGear is installed): the enchants, gems and consumables VoidGear's Prep tab says you need, with prices and Buy. It waits for scans to finish and drops a row by itself once you've bought and applied it. VoidAH works the same without VoidGear.
+- VoidGear's **Search AH** button searches in VoidAH's Browse tab.
+
 ## [1.3.1] — 2026-10-27
 
 ### Added
