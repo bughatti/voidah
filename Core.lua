@@ -1,6 +1,12 @@
 -- VoidSpy hook: enable with /vspy enable VoidAH  (no-op if VoidSpy missing/disabled)
 local function dbg(fmt, ...) if VoidSpy and VoidSpy.Log then VoidSpy:Log("VoidAH", fmt, ...) end end
 
+-- Settings are per character (CharSettings.lua): the module configs (undercut,
+-- shopping list, scan and alert options) and the Browse filters. Price scans,
+-- vendor prices and profession caches stay account-wide.
+select(2, ...).CharSettings.Register("VoidAH", "VoidUIAuctionDB", { "config", "usableOnly", "statFilter",
+    "upgradesOnly", "uncollectedOnly", "qualityOff", "maxPriceG", "currentExpansionOnly" })
+
 ----------------------------------------------------------------------
 -- VoidAH Core — shim providing VoidUI-compatible API for standalone use
 ----------------------------------------------------------------------
