@@ -2,7 +2,7 @@
 
 **A full Auction House replacement with built-in profession leveling plans and shopping lists.**
 
-VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Sell, My Auctions, Deals, Scan, and **Professions**. The Professions tab ships leveling shopping lists for all 9 crafting professions, with one-click Buy buttons that track how many you've bought as you go.
+VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Sell, My Auctions, Deals, Scan, and **Professions**. With **VoidProf** installed, the Professions tab shows what's left to buy to level any of the 9 crafting professions, priced from your Auction House data, with one-click Buy buttons that track how many you've bought as you go.
 
 ---
 
@@ -35,11 +35,14 @@ VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Se
 - **Prices stay fresh on their own** — if your last full scan is over 12 hours old, opening the AH runs one in the background while you browse
 - A **shopping list** with a Buy button on every row — survives reloads
 
-### Professions
+### Professions (with VoidProf)
+- **VoidProf works out the plan, VoidAH shows what to buy.** VoidProf is the profession companion; this tab is its shopping view at the Auction House
 - **The cheapest leveling path from your own skill** for Cooking, Alchemy, Jewelcrafting, Blacksmithing, Tailoring, Leatherworking, Engineering, Inscription and Enchanting, worked out live when you pick one
 - **Built from the game's own recipe data**: when each recipe turns yellow and grey and how many points it gives. Each craft is the recipe with the lowest cost per expected skill point, using the odds of a skill-up as recipes fade from yellow to grey
 - **Your prices**: your Auction House scan, vendor prices from merchants you've visited, else the game's listed price (marked "est.")
 - **Recipes you know come first.** Where none of them gives skill, it picks the cheapest one you don't know yet and flags it NOT LEARNED
+- **Uses what you already have.** Materials in your bags, bank and warband bank (and on your other characters, with VoidGather) come off the list first, and the path favors recipes that use them. The list shows only what's left to buy; the notes say what to take from which character
+- **Makes what's cheaper to make**: crafts a material with a recipe you know instead of buying it, and for Inscription mills your herbs into pigments for inks, with a "Make first" list. Milling yields are learned from your own milling
 - **Reads your real skill** for each expansion's tier (Midnight Alchemy, not your old Legion Alchemy). Open the profession window once and it remembers your recipes
 - The steps with skill ranges and craft counts, and the full material list with prices
 - **Buy** jumps to Browse with the item selected and shows a banner that tracks your progress (e.g. "47 / 200 in bags")

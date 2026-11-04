@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.5.0] — 2026-11-03
+
+### Changed
+- **Profession plans now come from VoidProf.** VoidProf works out the leveling path; VoidAH's Professions tab shows what's left to buy, with your Auction House prices and the Buy buttons. Install VoidProf to keep using the tab.
+- **Profession leveling uses what you already have.** The Professions tab's leveling path now counts the materials you own (this character's bags and bank and the warband bank, plus your other characters with VoidGather installed) and picks recipes that use them up. The materials list shows only what's left to buy, and the notes list what to take from which character ("423x Eversinging Dust: warband bank 20, your gatherer 398") and what it's worth on the AH. The plan still won't burn expensive materials to save a little gold.
+- **Makes materials when that's cheaper.** The leveling path can craft a material with a recipe you know instead of buying it, and for Inscription it mills herbs into pigments for your inks. A "Make first" list says what to mill and craft ("Mill 1590 Tranquility Bloom (159 mills) for ~1908 Powder Pigment", "Craft 49x Sienna Ink"). It counts whole crafts and whole mills, and inks from earlier steps go to later ones. Milling yields are learned from your own milling; until you've milled some they're an estimate.
+
+### Fixed
+- **VoidGear suggestions:** after you put on a new item, the gem it needs could be missing from the list until you closed and reopened the Auction House. The list now updates on its own once your gear has loaded.
+
 ## [1.4.3] — 2026-11-02
 
 ### Changed

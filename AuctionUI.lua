@@ -819,7 +819,7 @@ local function CreatePanel()
     -- Build individual tabs
     if VoidSpy and VoidSpy.Log then
         VoidSpy:Log("VoidAH", "building %d tabs, ProfPlans=%s",
-            #TAB_NAMES, tostring(VoidUI.ProfessionPlans and #VoidUI.ProfessionPlans or "nil"))
+            #TAB_NAMES, tostring(VoidProf and VoidProf.Planner and #VoidProf.Planner:List() or "nil"))
     end
     BuildBrowseTab(tabFrames[1])
     BuildSellTab(tabFrames[2])
@@ -4280,6 +4280,9 @@ local VG_TOP = -66 - 10 * 20 - 10   -- under the 10 shopping-list rows
 -- section just says it's waiting.
 local vgSnapshot          -- { list = {...}, mode = "Best"|"Budget" } or nil = work it out next time
 local vgSnapshotKey       -- AH visit + spec + Best/Budget it was made for
+local vgRetryQueued = false   -- VoidGear said "still loading": ask again in a second
+local vgRetries, vgRetryKey = 0, nil   -- per list key; a gear or bag change starts over
+local VG_MAX_RETRIES = 10
 
 -- Your gear or bags changed (an enchant or gem put on, something bought): work
 -- the list out again. Without this, items you'd bought and used still showed
@@ -4291,6 +4294,7 @@ vgWatch:RegisterEvent("BAG_UPDATE_DELAYED")
 vgWatch:RegisterUnitEvent("UNIT_INVENTORY_CHANGED", "player")
 vgWatch:SetScript("OnEvent", function()
     vgSnapshot = nil
+    vgRetries = 0
     if vgDirtyPending then return end
     vgDirtyPending = true
     C_Timer.After(0.5, function()
@@ -4363,7 +4367,7 @@ local function UpdateVoidGearSuggestions(parent)
     local modeNow = (prep.GetMode and prep:GetMode() == "budget") and "Budget" or "Best"
     local key = ahSessionID .. ":" .. specIdx .. ":" .. modeNow
     if not vgSnapshot or vgSnapshotKey ~= key then
-        local ok, l = pcall(prep.GetShoppingList, prep)
+        local ok, l, pending = pcall(prep.GetShoppingList, prep)
         if not ok or not l then
             -- not ready (no data for this spec, or still loading): say so, try again next redraw
             parent._vgHead:SetText("|cff00ffffVoidGear suggestions|r  |cff888888not available for this spec yet|r")
@@ -4376,9 +4380,27 @@ local function UpdateVoidGearSuggestions(parent)
         for _, e in ipairs(l) do
             if e.consumable or (e.count or 1) - (e.have or 0) > 0 then todo[#todo + 1] = e end
         end
-        vgSnapshot, vgSnapshotKey = { list = todo, mode = modeNow }, key
+        vgSnapshot, vgSnapshotKey = { list = todo, mode = modeNow, pending = pending }, key
     end
+    -- Some of your gear (or a consumable's tooltip) was still loading: show what
+    -- there is, then work it out again shortly. A just-equipped ring reported no
+    -- socket, and its gem stayed off the list until the AH was reopened (2026-11-03).
     local list, mode = vgSnapshot.list, vgSnapshot.mode
+    if vgSnapshot.pending then
+        if vgRetryKey ~= key then vgRetryKey, vgRetries = key, 0 end
+        if vgRetries < VG_MAX_RETRIES then   -- something that never loads must not poll forever
+            vgSnapshot = nil
+            if not vgRetryQueued then
+                vgRetryQueued = true
+                vgRetries = vgRetries + 1
+                C_Timer.After(1, function()
+                    vgRetryQueued = false
+                    local scanTab = tabFrames and tabFrames[5]
+                    if scanTab and scanTab:IsVisible() then UpdateShoppingList(scanTab) end
+                end)
+            end
+        end
+    end
     parent._vgHead:SetText(("|cff00ffffVoidGear suggestions|r  |cff888888(%s -- set in VoidGear's Prep tab)|r"):format(mode))
     if #list == 0 then
         parent._vgHead:SetText("|cff00ffffVoidGear suggestions|r  |cff66ff66nothing to buy|r")
@@ -5036,7 +5058,10 @@ end)
 -- Professions Tab — leveling shopping lists
 ----------------------------------------------------------------------
 function BuildProfessionsTab(parent)
-    local plans = VoidUI.ProfessionPlans or {}
+    -- The plans come from VoidProf (the profession brain since 2026-11-03);
+    -- this tab shows what to buy and the prices. Without VoidProf: a pointer.
+    local planner = VoidProf and VoidProf.Planner
+    local plans = planner and planner:List() or {}
 
     -- Map profession name → { rank = N, maxRank = M } so we can show
     -- live skill levels in the plan title and color-code each step.
@@ -5096,7 +5121,7 @@ function BuildProfessionsTab(parent)
     VoidUI:SetFont(subtitle, 9, "")
     subtitle:SetPoint("TOPLEFT", 16, -32)
     subtitle:SetTextColor(0.55, 0.55, 0.6)
-    subtitle:SetText("The cheapest path from your skill, priced from your Auction House data. Click a row to search the AH or add to your Shopping List.")
+    subtitle:SetText("VoidProf's cheapest path from your skill and what you have; what's left to buy, priced from your Auction House data.")
 
     local leftPane = CreateFrame("Frame", nil, parent, "BackdropTemplate")
     leftPane:SetPoint("TOPLEFT", 16, -56)
@@ -5182,9 +5207,9 @@ function BuildProfessionsTab(parent)
             maxRank = cache.skillMaxRank or maxRank
         end
 
-        -- The plan itself is worked out now, from your skill, the recipes you know
-        -- and your prices (ProfessionPlans.lua).
-        if VoidUI.BuildProfessionPlan then plan = VoidUI.BuildProfessionPlan(plan, rank) or plan end
+        -- The plan itself is worked out now by VoidProf, from your skill, the
+        -- recipes you know, what your characters have and your prices.
+        if planner then plan = planner:Build(plan, rank) or plan end
         if plan.skillLevel then rank, maxRank = plan.skillLevel, plan.maxSkillLevel or maxRank end
         -- this expansion's skill unknown: the plan starts at 1, so the base
         -- profession's rank (maybe an old expansion's 100) mustn't tick steps off
@@ -5213,7 +5238,19 @@ function BuildProfessionsTab(parent)
         if plan.trainer then
             notesTxt = "|cffffd200Trainer:|r " .. plan.trainer .. "\n"
         end
-        if plan.notes then
+        -- Short here: this tab is the shopping view, VoidProf (/vp) has the
+        -- milling, crafting and per-character details. The long notes left room
+        -- for one material row in the first in-game test (2026-11-03).
+        if plan.summary then
+            notesTxt = notesTxt .. plan.summary .. "\n"
+            if plan.deNote then notesTxt = notesTxt .. plan.deNote .. "\n" end
+            local made, own = plan.made and #plan.made or 0, plan.fromOwn and #plan.fromOwn or 0
+            if made > 0 or own > 0 then
+                notesTxt = notesTxt .. ("|cffaaaaaaAlready off the list: %d of your own materials%s. What to mill, craft and take from which character: |cff00c7ff/vp|r|r\n"):format(
+                    own, made > 0 and (", " .. made .. " things to make first") or "")
+            end
+            if plan.openWindow then notesTxt = notesTxt .. plan.openWindow .. "\n" end
+        elseif plan.notes then
             notesTxt = notesTxt .. plan.notes .. "\n"
         end
         if plan.steps then
@@ -5243,9 +5280,8 @@ function BuildProfessionsTab(parent)
                     or  ("|cffff5050[NOT LEARNED — go to: " .. stepSrc .. "]|r")
 
                 notesTxt = notesTxt .. string.format(
-                    "\n  %s |cff00c7ff%s|r  %sCraft %dx %s|r %s\n      %sper craft: %s|r",
-                    statusIcon, rangeStr, statusColor, step.count, step.recipe, recipeStatus,
-                    statusColor, step.per)
+                    "\n  %s |cff00c7ff%s|r  %sCraft %dx %s|r %s",
+                    statusIcon, rangeStr, statusColor, step.count, step.recipe, recipeStatus)
             end
         end
         planNotes:SetText(notesTxt)
@@ -5257,7 +5293,7 @@ function BuildProfessionsTab(parent)
 
         parent._matsHeader:ClearAllPoints()
         parent._matsHeader:SetPoint("TOPLEFT", parent._notesHolder, "BOTTOMLEFT", 0, -8)
-        parent._matsHeader:SetText("Total Materials Needed (shop the AH):")
+        parent._matsHeader:SetText("Materials to buy (what you own is already taken off):")
 
         parent._matScroll:ClearAllPoints()
         parent._matScroll:SetPoint("TOPLEFT", parent._matsHeader, "BOTTOMLEFT", 0, -4)
@@ -5412,6 +5448,12 @@ function BuildProfessionsTab(parent)
         profRows[i] = row
     end
     leftChild:SetHeight(math.max(1, #plans * (rowH + 2)))
+    if #plans == 0 then
+        planTitle:SetText("|cff00c7ffLeveling plans come from VoidProf|r")
+        planNotes:SetText("Install |cff00c7ffVoidProf|r (CurseForge) to get the cheapest leveling path for every crafting profession, "
+            .. "worked out from what your characters already have. This tab then shows what's left to buy, with your prices.")
+        notesHolder:SetHeight(math.max(30, planNotes:GetStringHeight() + 10))   -- the holder starts 20px tall
+    end
 
     local autoSelect = 1
     for i, plan in ipairs(plans) do
