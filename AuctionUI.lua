@@ -362,24 +362,46 @@ local PRICE_SORT = {{ sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort 
 -- "AH prices must be in silver increments" (Blizzard_AuctionHouseSellFrame).
 -- A price with copper in it is silently dropped by the server -- for single
 -- items as well as commodities -- and a % undercut nearly always makes copper.
--- WoW Forever takes copper prices (C_AuctionHouse.SupportsCopperValues; most of its
--- market is under 1s), so there the price is only floored to whole copper.
+-- WoW Forever takes copper prices for COMMODITIES (stackables; most of its market is
+-- under 1s), so there a commodity is only floored to whole copper. Single items
+-- ("Item" listings: gear, the big catfish) still need whole silver on Forever: a copper
+-- buyout fails with "Internal auction error", and none of the 140k item auctions in
+-- Forever's AH data (2026-11-06) has copper in its price.
 local function CopperAllowed()
     return C_AuctionHouse.SupportsCopperValues and C_AuctionHouse.SupportsCopperValues() and true or false
 end
-local function ToSilver(copper)
-    if CopperAllowed() then return math.max(1, math.floor(copper)) end
+local function ToSilver(copper, isItem)
+    if CopperAllowed() and not isItem then return math.max(1, math.floor(copper)) end
     return math.max(100, math.floor(copper / 100) * 100)
 end
 -- Market price -> the price we'd post at: the % undercut (0% = match), or the
--- legacy flat copper undercut, then rounded to what the AH accepts.
-local function UndercutPrice(price, cfg)
+-- legacy flat copper undercut, then rounded to what the AH accepts (isItem: a
+-- single-item listing, whole silver everywhere).
+local function UndercutPrice(price, cfg, isItem)
     cfg = cfg or VoidUI:GetModuleConfig("Auction")
     local pct = tonumber(cfg.undercutPercent)
-    if pct and pct >= 0 then return ToSilver(price * (1 - pct / 100)) end
+    if isItem and CopperAllowed() and pct and pct >= 0 then
+        -- Forever single items: whole silver, rounded UP, but never above the lowest
+        -- listing. Rounding down turned "1% under 19s" into 18s (4% less, a lot at low
+        -- level); this ties the lowest seller instead, and a bigger item that lands on
+        -- whole silver still undercuts.
+        -- to whole copper first: 1000 * 0.3 is 300.00000000000006, which would ceil to 4s
+        local target = math.floor(price * (1 - pct / 100) + 0.5)
+        local up = math.ceil(target / 100) * 100
+        local cap = math.floor(price / 100) * 100
+        return math.max(100, math.min(up, cap))
+    end
+    if pct and pct >= 0 then return ToSilver(price * (1 - pct / 100), isItem) end
     local flat = cfg.undercutCopper or 100
-    if CopperAllowed() and flat >= price then flat = 1 end   -- 1s off an 8c item = 1c
-    return ToSilver(price - flat)
+    if CopperAllowed() and not isItem and flat >= price then flat = 1 end   -- 1s off an 8c stack = 1c
+    return ToSilver(price - flat, isItem)
+end
+-- Is the bag slot a single-item listing (not a commodity)? Unknown (data not loaded) counts
+-- as a commodity here; the post itself checks again before sending.
+local function IsItemListing(bag, slot)
+    if not (bag and slot and ItemLocation and C_AuctionHouse.GetItemCommodityStatus) then return false end
+    local ok, status = pcall(C_AuctionHouse.GetItemCommodityStatus, ItemLocation:CreateFromBagAndSlot(bag, slot))
+    return ok and status == Enum.ItemCommodityStatus.Item
 end
 
 local function BuildTreeFlatList()
@@ -2880,7 +2902,7 @@ RefreshSellItemList = function()
             -- took a flat 1s off, so every Forever item under 1s showed 1c)
             local price = AH:GetPrice(item.itemID)
             if price then
-                row._price:SetText(VoidUI:FormatMoney(UndercutPrice(price, cfg)))
+                row._price:SetText(VoidUI:FormatMoney(UndercutPrice(price, cfg, IsItemListing(item.bag, item.slot))))
             else
                 row._price:SetText("|cff666666no data|r")
             end
@@ -3052,7 +3074,7 @@ function BuildSellTab(parent)
         if not sellPending.itemID then return end
         local marketPrice = AH:GetPrice(sellPending.itemID)
         if not marketPrice or marketPrice <= 0 then return end
-        local newPrice = ToSilver(marketPrice * (1 - pct / 100))
+        local newPrice = UndercutPrice(marketPrice, cfg, sellPending.isItem)
         parent._goldBox:SetText(tostring(math.floor(newPrice / 10000)))
         parent._silverBox:SetText(tostring(math.floor((newPrice % 10000) / 100)))
         parent._copperBox:SetText(tostring(newPrice % 100))
@@ -3274,6 +3296,9 @@ function SellTab_SetItem(parent, itemLocation)
     sellPending.itemID = itemID
     sellPending._priceEdited = nil   -- set when the player types a price (live prices then leave it alone)
     sellPending.isCommodity = isCommodity
+    -- Single-item listing (whole silver on Forever). Unknown status (data not loaded)
+    -- is NOT treated as an item: the re-check below prices it again once it's known.
+    sellPending.isItem = (commodityStatus == Enum.ItemCommodityStatus.Item)
     sellPending.stackCount = count
 
     -- If commodity status unknown, request data load and re-check
@@ -3284,9 +3309,19 @@ function SellTab_SetItem(parent, itemLocation)
             if sellPending.itemID ~= itemID then return end  -- user selected something else
             local status = C_AuctionHouse.GetItemCommodityStatus(itemLocation)
             sellPending.isCommodity = (status == Enum.ItemCommodityStatus.Commodity)
+            sellPending.isItem = (status == Enum.ItemCommodityStatus.Item)
             local label = sellPending.isCommodity and "Commodity" or "Item"
             sellPending._baseInfo = label .. " | Stack: " .. count
             parent._sellInfo:SetText(sellPending._baseInfo)
+            -- Now that the type is known, price it again (single items round to whole
+            -- silver on Forever), unless the player already typed a price.
+            local p = not sellPending._priceEdited and AH:GetPrice(itemID)
+            if p then
+                p = UndercutPrice(p, nil, sellPending.isItem)
+                parent._goldBox:SetText(tostring(math.floor(p / 10000)))
+                parent._silverBox:SetText(tostring(math.floor((p % 10000) / 100)))
+                parent._copperBox:SetText(tostring(p % 100))
+            end
         end)
     end
 
@@ -3305,7 +3340,7 @@ function SellTab_SetItem(parent, itemLocation)
     -- Set price from DB as default — apply % undercut if set, else fall back
     -- to copper undercut for backwards compatibility
     local price = AH:GetPrice(itemID)
-    if price then price = UndercutPrice(price) end
+    if price then price = UndercutPrice(price, nil, sellPending.isItem) end
     if price then
         parent._goldBox:SetText(tostring(math.floor(price / 10000)))
         parent._silverBox:SetText(tostring(math.floor((price % 10000) / 100)))
@@ -3418,7 +3453,7 @@ function SellTab_PostAuction(parent)
     if isCommodity then
         -- PostCommodity silently fails when unitPrice has any copper component
         -- (retail). ToSilver rounds to whole silver there, whole copper on Forever.
-        local commodityPrice = ToSilver(totalPrice)
+        local commodityPrice = ToSilver(totalPrice, false)
         if commodityPrice ~= totalPrice then
             print(("|cffffaa00VoidAH|r: Commodity price rounded to %s (PostCommodity rejects copper)."):format(
                 VoidUI:FormatMoney(commodityPrice)))
@@ -3430,7 +3465,7 @@ function SellTab_PostAuction(parent)
     else
         -- Same silver rule as commodities: a copper price here was silently
         -- dropped -- every gear/decor post failed while commodities worked.
-        local itemPrice = ToSilver(totalPrice)
+        local itemPrice = ToSilver(totalPrice, true)
         if itemPrice ~= totalPrice then
             print(("|cffffaa00VoidAH|r: Price rounded to %s (the auction house only takes whole silver)."):format(
                 VoidUI:FormatMoney(itemPrice)))
@@ -4643,7 +4678,7 @@ end
 -- % undercut SellTab_SetItem uses (the old path used the legacy flat 1s undercut,
 -- silently replacing the % price) and rebuild the info line instead of appending.
 function ApplySellLivePrice(parent, perUnit)
-    local price = UndercutPrice(perUnit)
+    local price = UndercutPrice(perUnit, nil, sellPending.isItem)
     -- Never replace a price the player typed while the search was in flight.
     if not sellPending._priceEdited then
         parent._goldBox:SetText(tostring(math.floor(price / 10000)))

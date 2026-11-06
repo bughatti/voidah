@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.5.2] — 2026-11-06
+
+### Fixed
+- **WoW Forever: single items post again.** Forever's Auction House takes copper prices only for stackable goods; a single item (gear, the big catfish) with copper in its price failed with "Internal auction error" since 1.5.1. Single items now list in whole silver, rounded up so you never drop more than your % undercut, and never above the lowest listing: at 19s you list at 19s, not 18s. Stackables keep their copper prices. Retail is unchanged.
+
 ## [1.5.1] — 2026-11-06
 
 ### Fixed
