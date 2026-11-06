@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.6.0] — 2026-11-06
+
+### Added
+- **What selling costs you, before you post.** The Sell tab now shows the deposit (back if it sells, lost if not), the AH's cut, what you'll actually get, and how that compares to the vendor: "List it: +2s 10c over vendor" or "Vendor it: the AH pays 30c less".
+- **Selling ledger.** My Auctions shows "Selling today" and "7 days": what selling earned you after the AH's cut, deposits lost on expired or cancelled auctions, and postage. Hover it for the breakdown for this character and for all your characters, or type `/vahmoney`.
+- **AH value in item tooltips.** Items you can sell show their AH price, what you'd get after the cut, and whether listing beats the vendor. Soulbound items are skipped. Prices come from your own scans, with their age.
+- **The AH's cut is learned from your sales,** per auction house (sale mail shows it). Until your first sale it assumes 5% and marks it "5%?".
+- **VoidQuest** uses these values for its "worth the most gold" quest reward marker.
+
+### Fixed
+- **Sell tab layout:** the price boxes overlapped the duration buttons and "% undercut" ran past the panel's edge. The form is on an even grid now and fits.
+
 ## [1.5.2] — 2026-11-06
 
 ### Fixed

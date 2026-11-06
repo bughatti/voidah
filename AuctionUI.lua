@@ -356,6 +356,7 @@ local PopulateBuyRow
 local ShowConfirmBar
 local HideConfirmBar
 local ApplySellLivePrice
+local UpdateSellBreakdown
 -- Price lookups read result #1 as the lowest. Commodities come back price-sorted
 -- anyway; items (gear) do NOT unless asked, so an unsorted query priced gear wrong.
 local PRICE_SORT = {{ sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort = false }}
@@ -2997,15 +2998,26 @@ function BuildSellTab(parent)
     sellInfo:SetJustifyH("LEFT")
     parent._sellInfo = sellInfo
 
+    -- Form grid: labels in one column, inputs in another, rows 28px apart
+    -- (inputs and buttons are 22px tall; rows chained 10px under the label's
+    -- text made the price boxes overlap the duration buttons and those the
+    -- quantity box). Everything has to end inside the 380px frame.
+    local LABEL_X, INPUT_X = 10, 92
+    local ROW_PRICE, ROW_DUR, ROW_QTY = -70, -98, -126
+    local function RowLabel(text, y)
+        local fs = itemFrame:CreateFontString(nil, "OVERLAY")
+        VoidUI:SetFont(fs, 10, "")
+        fs:SetPoint("LEFT", itemFrame, "TOPLEFT", LABEL_X, y)
+        fs:SetText(text)
+        return fs
+    end
+
     -- Price input area
-    local priceLabel = itemFrame:CreateFontString(nil, "OVERLAY")
-    VoidUI:SetFont(priceLabel, 10, "")
-    priceLabel:SetPoint("TOPLEFT", itemFrame, "TOPLEFT", 10, -70)
-    priceLabel:SetText("Price per unit:")
+    local priceLabel = RowLabel("Price per unit:", ROW_PRICE)
     parent._priceLabel = priceLabel
 
-    local goldBox = CreateEditBox(itemFrame, 80, 22, "Gold")
-    goldBox:SetPoint("LEFT", priceLabel, "RIGHT", 10, 0)
+    local goldBox = CreateEditBox(itemFrame, 52, 22, "Gold")
+    goldBox:SetPoint("LEFT", itemFrame, "TOPLEFT", INPUT_X, ROW_PRICE)
     goldBox:SetNumeric(true)
     parent._goldBox = goldBox
 
@@ -3014,7 +3026,7 @@ function BuildSellTab(parent)
     goldSuffix:SetPoint("LEFT", goldBox, "RIGHT", 2, 0)
     goldSuffix:SetText("|cffffd700g|r")
 
-    local silverBox = CreateEditBox(itemFrame, 40, 22, "Sv")
+    local silverBox = CreateEditBox(itemFrame, 34, 22, "Sv")
     silverBox:SetPoint("LEFT", goldSuffix, "RIGHT", 4, 0)
     silverBox:SetNumeric(true)
     parent._silverBox = silverBox
@@ -3024,7 +3036,7 @@ function BuildSellTab(parent)
     silverSuffix:SetPoint("LEFT", silverBox, "RIGHT", 2, 0)
     silverSuffix:SetText("|cffc0c0c0s|r")
 
-    local copperBox = CreateEditBox(itemFrame, 40, 22, "Cu")
+    local copperBox = CreateEditBox(itemFrame, 34, 22, "Cu")
     copperBox:SetPoint("LEFT", silverSuffix, "RIGHT", 4, 0)
     copperBox:SetNumeric(true)
     parent._copperBox = copperBox
@@ -3046,8 +3058,8 @@ function BuildSellTab(parent)
     -- IMPORTANT: build WITHOUT a placeholder arg, because CreateEditBox sets
     -- its own OnTextChanged for placeholder show/hide that would conflict
     -- with our recalc handler.
-    local undercutBox = CreateEditBox(itemFrame, 32, 22, nil)
-    undercutBox:SetPoint("LEFT", copperSuffix, "RIGHT", 10, 0)
+    local undercutBox = CreateEditBox(itemFrame, 30, 22, nil)
+    undercutBox:SetPoint("LEFT", copperSuffix, "RIGHT", 12, 0)
     undercutBox:SetNumeric(false)  -- allow decimal like 2.5
     parent._undercutBox = undercutBox
 
@@ -3085,10 +3097,7 @@ function BuildSellTab(parent)
     undercutBox:SetScript("OnEditFocusLost",  CommitUndercutChange)
 
     -- Duration buttons
-    local durLabel = itemFrame:CreateFontString(nil, "OVERLAY")
-    VoidUI:SetFont(durLabel, 10, "")
-    durLabel:SetPoint("TOPLEFT", priceLabel, "BOTTOMLEFT", 0, -10)
-    durLabel:SetText("Duration:")
+    local durLabel = RowLabel("Duration:", ROW_DUR)
     parent._durLabel = durLabel
 
     local durations = { { 12, "12h" }, { 24, "24h" }, { 48, "48h" } }
@@ -3100,6 +3109,7 @@ function BuildSellTab(parent)
     for di, d in ipairs(durations) do
         local dbtn = CreateButton(itemFrame, 50, 22, d[2], function()
             sellPending.duration = di
+            if UpdateSellBreakdown then UpdateSellBreakdown(parent) end
             for j, b in ipairs(durButtons) do
                 if j == di then
                     b._bg:SetColorTexture(0, 0.55, 0.55, 1)
@@ -3108,29 +3118,35 @@ function BuildSellTab(parent)
                 end
             end
         end)
-        dbtn:SetPoint("LEFT", durLabel, "RIGHT", 10 + (di - 1) * 56, 0)
+        dbtn:SetPoint("LEFT", itemFrame, "TOPLEFT", INPUT_X + (di - 1) * 56, ROW_DUR)
         durButtons[di] = dbtn
     end
     durButtons[3]._bg:SetColorTexture(0, 0.55, 0.55, 1)  -- default 48h
     parent._durButtons = durButtons
 
     -- Quantity
-    local qtyLabel = itemFrame:CreateFontString(nil, "OVERLAY")
-    VoidUI:SetFont(qtyLabel, 10, "")
-    qtyLabel:SetPoint("TOPLEFT", durLabel, "BOTTOMLEFT", 0, -10)
-    qtyLabel:SetText("Quantity:")
+    RowLabel("Quantity:", ROW_QTY)
 
-    local qtyBox = CreateEditBox(itemFrame, 60, 22, "1")
-    qtyBox:SetPoint("LEFT", qtyLabel, "RIGHT", 10, 0)
+    local qtyBox = CreateEditBox(itemFrame, 52, 22, "1")
+    qtyBox:SetPoint("LEFT", itemFrame, "TOPLEFT", INPUT_X, ROW_QTY)
     qtyBox:SetNumeric(true)
     parent._qtyBox = qtyBox
 
     -- Deposit info
     local depositText = itemFrame:CreateFontString(nil, "OVERLAY")
     VoidUI:SetFont(depositText, 10, "")
-    depositText:SetPoint("TOPLEFT", qtyLabel, "BOTTOMLEFT", 0, -10)
+    depositText:SetPoint("TOPLEFT", itemFrame, "TOPLEFT", LABEL_X, ROW_QTY - 18)
+    depositText:SetWidth(360)
+    depositText:SetJustifyH("LEFT")
+    depositText:SetWordWrap(true)
+    depositText:SetSpacing(2)
     depositText:SetText("")
     parent._depositText = depositText
+    -- What this listing costs and earns (VoidAH_Money): redrawn on every price,
+    -- quantity or duration change.
+    for _, box in ipairs({ parent._goldBox, parent._silverBox, parent._copperBox, qtyBox }) do
+        if box then box:HookScript("OnTextChanged", function() UpdateSellBreakdown(parent) end) end
+    end
 
     -- POST button (hardware event — calls PostItem/PostCommodity in OnClick)
     local postBtn = CreateFrame("Button", "VoidUI_AH_PostButton", parent)
@@ -3442,6 +3458,11 @@ function SellTab_PostAuction(parent)
         parent._qtyBox:SetText("1")
     end
 
+    -- Deposit for the ledger, read before posting (the item still sits in the bag).
+    if VoidAH_Money then
+        sellPending._lastPostDeposit = VoidAH_Money.Deposit(sellPending.itemLocation, sellPending.itemID, duration, qty, isCommodity)
+    end
+
     -- ONE post call per click, no pcall -- the same way Blizzard's sell frames do it.
     -- PostItem/PostCommodity return needsConfirmation, NOT success: false = posted
     -- (success arrives as AUCTION_HOUSE_AUCTION_CREATED), true = the game wants a
@@ -3501,6 +3522,27 @@ function BuildMyAuctionsTab(parent)
         print("|cff00ffffVoidAH|r: Cancel All is not yet implemented for safety.")
     end)
     cancelAllBtn:SetPoint("LEFT", refreshBtn, "RIGHT", 6, 0)
+
+    -- What selling earned after costs (VoidAH_Money ledger); hover for the breakdown.
+    local ledger = CreateFrame("Button", nil, parent)
+    ledger:SetSize(420, 24)
+    ledger:SetPoint("TOPRIGHT", -10, -4)
+    local ledgerText = ledger:CreateFontString(nil, "OVERLAY")
+    VoidUI:SetFont(ledgerText, 10, "")
+    ledgerText:SetPoint("RIGHT")
+    ledgerText:SetJustifyH("RIGHT")
+    ledger:SetScript("OnShow", function()
+        if VoidAH_Money then ledgerText:SetText(VoidAH_Money.SummaryLine() .. "  |cff888888(hover)|r") end
+    end)
+    ledger:SetScript("OnEnter", function(self)
+        if not VoidAH_Money then return end
+        GameTooltip:SetOwner(self, "ANCHOR_BOTTOMLEFT")
+        GameTooltip:AddLine("What selling earned you, after its costs")
+        VoidAH_Money.AddLedgerTooltip(GameTooltip)
+        GameTooltip:Show()
+    end)
+    ledger:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    parent._ledger = ledger
 
     -- Column headers
     local colHeader = CreateFrame("Frame", nil, parent)
@@ -4674,6 +4716,29 @@ function AH:OnAHClose()
     UpdateStatusBar()
 end
 
+-- Sell tab: what this listing costs and earns (deposit, AH cut, what you get, vs vendor),
+-- under Quantity. Redrawn on every price / quantity / duration change.
+function UpdateSellBreakdown(parent)
+    local txt = parent and parent._depositText
+    if not txt then return end
+    if not VoidAH_Money or not sellPending.itemID then txt:SetText(""); return end
+    local unit = (tonumber(parent._goldBox:GetText()) or 0) * 10000
+        + (tonumber(parent._silverBox:GetText()) or 0) * 100
+        + (tonumber(parent._copperBox:GetText()) or 0)
+    if unit <= 0 then txt:SetText(""); return end
+    -- the price as it will actually post (whole silver where the AH requires it)
+    unit = ToSilver(unit, not sellPending.isCommodity)
+    local qty = math.max(1, tonumber(parent._qtyBox:GetText()) or 1)
+    if not sellPending.isCommodity then qty = 1 end   -- single items post one at a time
+    local duration = sellPending.duration or 3
+    local dep, exact = VoidAH_Money.Deposit(sellPending.itemLocation, sellPending.itemID, duration, qty, sellPending.isCommodity, false)
+    -- vendor price from this copy's link: scaled gear sells for more than its base item
+    local loc = sellPending.itemLocation
+    local link = loc and C_Item.DoesItemExist(loc) and C_Item.GetItemLink(loc)
+    local b = VoidAH_Money.Breakdown(link or sellPending.itemID, unit, qty, dep)
+    txt:SetText(VoidAH_Money.BreakdownText(b, exact, ({ "12h", "24h", "48h" })[duration]))
+end
+
 -- Live lowest price arrived for the item on the Sell tab: price it with the same
 -- % undercut SellTab_SetItem uses (the old path used the legacy flat 1s undercut,
 -- silently replacing the % price) and rebuild the info line instead of appending.
@@ -4868,7 +4933,11 @@ function AH:OnAuctionCreated()
             parent._recentPosts[i]:SetText(parent._recentPosts[i - 1]:GetText())
         end
         parent._recentPosts[1]:SetText("|cff00ff00" .. entry .. "|r")
+        if VoidAH_Money then
+            VoidAH_Money.RecordPost(sellPending._lastPostName, sellPending._lastPostQty, sellPending._lastPostDeposit)
+        end
         sellPending._lastPostName = nil
+        sellPending._lastPostDeposit = nil
     end
 
     -- Refresh owned auctions + bag grid, then auto-select the next item

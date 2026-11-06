@@ -20,10 +20,15 @@ VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Se
 ### Sell
 - Stack-size and total-quantity inputs with a **deposit calculator**
 - **Smart undercut** — fills in a price just below the cheapest listing
-- Prices in whole silver (the auction house's own rule); soulbound and warbound items are hidden automatically
+- **What a listing really earns you:** the deposit (back if it sells, lost if not), the AH's cut, what you get, and whether that beats the vendor ("List it: +2s over vendor" or "Vendor it")
+- Prices follow each auction house's own rules (whole silver on retail; on WoW Forever, copper for stackable goods and whole silver for single items); soulbound and warbound items are hidden automatically
 
 ### My Auctions
 - All your active listings in one view, with a **cancel button** on each row
+- **Selling ledger:** "Selling today / 7 days" shows what selling actually earned you after the AH's cut, lost deposits and postage. Hover it for the breakdown per character and for all your characters
+
+### Item tooltips
+- Any item you can sell shows its **AH price, what you'd get after the cut, and whether to list it or vendor it**, from your own scans. Soulbound items are left alone
 
 ### Deals
 - **Flags listings priced well below** your scanned price history
@@ -61,6 +66,7 @@ VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Se
 | Command | What it does |
 |---|---|
 | `/vah` | Bring up the VoidAH panel at an Auctioneer if it didn't open on its own |
+| `/vahmoney` | Print your selling ledger (today, 7 days, all characters) |
 
 You rarely need it — VoidAH opens automatically when you talk to an Auctioneer.
 
@@ -80,6 +86,8 @@ You rarely need it — VoidAH opens automatically when you talk to an Auctioneer
 - **Profession plans** come from the game's own recipe tables and your own prices. Skill-ups past yellow are a chance, so counts are what you can expect, not a guarantee. Gathering professions are left out: you gather those, not buy them (VoidGather shows where your skill-up nodes are).
 - **For the best prices,** run a full scan first, and open each profession window once so VoidAH knows your recipes.
 - Your price history is shared with **VoidBags**, which uses it to spot items worth selling.
+- **The AH's cut is learned from your own sales.** No game API tells addons the cut, so VoidAH reads it from your sale mail, per auction house. Until your first sale there it assumes 5% and says so ("5%?").
+- **The ledger counts what it sees:** listings made with VoidAH, and sale and return mail you take while it's running. It stores money totals only, on your own computer.
 
 ---
 
