@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.5.1] — 2026-11-06
+
+### Fixed
+- **WoW Forever: Sell tab prices.** The price list took a flat 1 silver off every item, so anything selling under 1s (most of Forever's market) showed 1c. The list now uses your % undercut, the same as the price box.
+- **WoW Forever: copper prices.** Forever's Auction House takes copper, so VoidAH no longer rounds your price up to whole silver there (an 8c item posted at 1s). Retail still rounds to whole silver, as it must.
+
 ## [1.5.0] — 2026-11-03
 
 ### Changed

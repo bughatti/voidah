@@ -362,8 +362,24 @@ local PRICE_SORT = {{ sortOrder = Enum.AuctionHouseSortOrder.Price, reverseSort 
 -- "AH prices must be in silver increments" (Blizzard_AuctionHouseSellFrame).
 -- A price with copper in it is silently dropped by the server -- for single
 -- items as well as commodities -- and a % undercut nearly always makes copper.
+-- WoW Forever takes copper prices (C_AuctionHouse.SupportsCopperValues; most of its
+-- market is under 1s), so there the price is only floored to whole copper.
+local function CopperAllowed()
+    return C_AuctionHouse.SupportsCopperValues and C_AuctionHouse.SupportsCopperValues() and true or false
+end
 local function ToSilver(copper)
+    if CopperAllowed() then return math.max(1, math.floor(copper)) end
     return math.max(100, math.floor(copper / 100) * 100)
+end
+-- Market price -> the price we'd post at: the % undercut (0% = match), or the
+-- legacy flat copper undercut, then rounded to what the AH accepts.
+local function UndercutPrice(price, cfg)
+    cfg = cfg or VoidUI:GetModuleConfig("Auction")
+    local pct = tonumber(cfg.undercutPercent)
+    if pct and pct >= 0 then return ToSilver(price * (1 - pct / 100)) end
+    local flat = cfg.undercutCopper or 100
+    if CopperAllowed() and flat >= price then flat = 1 end   -- 1s off an 8c item = 1c
+    return ToSilver(price - flat)
 end
 
 local function BuildTreeFlatList()
@@ -1007,7 +1023,13 @@ local function SpecInfo()
     local id, _, _, _, _, primary = getInfo(i)
     return id, primary
 end
+-- WoW Forever has no specs: its spec stub reports Intellect for every class (seen on a
+-- rogue, 2026-11-04), so go by class there. Hybrids (Paladin, Druid, Shaman) get nil = Any.
+local IS_FOREVER = (select(4, GetBuildInfo()) or 0) < 100000
+local CLASS_PRIMARY = { WARRIOR = "STR", DEATHKNIGHT = "STR", ROGUE = "AGI", HUNTER = "AGI",
+    DEMONHUNTER = "AGI", MAGE = "INT", PRIEST = "INT", WARLOCK = "INT", EVOKER = "INT" }
 local function SpecStat()
+    if IS_FOREVER then return CLASS_PRIMARY[select(2, UnitClass("player"))] end
     local _, primary = SpecInfo()
     return SPEC_PRIMARY[primary]
 end
@@ -2780,7 +2802,6 @@ RefreshSellItemList = function()
     sellListOffset = math.max(0, math.min(sellListOffset, maxOffset))
 
     local cfg = VoidUI:GetModuleConfig("Auction")
-    local undercut = cfg.undercutCopper or 100
 
     for i = 1, SELL_LIST_VISIBLE do
         local row = rows[i]
@@ -2855,11 +2876,11 @@ RefreshSellItemList = function()
             -- Quantity
             row._qty:SetText(item.count > 1 and tostring(item.count) or "1")
 
-            -- Price from DB with undercut
+            -- Price from DB with the same undercut the post box uses (this list
+            -- took a flat 1s off, so every Forever item under 1s showed 1c)
             local price = AH:GetPrice(item.itemID)
             if price then
-                local sellPrice = math.max(1, price - undercut)
-                row._price:SetText(VoidUI:FormatMoney(sellPrice))
+                row._price:SetText(VoidUI:FormatMoney(UndercutPrice(price, cfg)))
             else
                 row._price:SetText("|cff666666no data|r")
             end
@@ -3284,16 +3305,7 @@ function SellTab_SetItem(parent, itemLocation)
     -- Set price from DB as default — apply % undercut if set, else fall back
     -- to copper undercut for backwards compatibility
     local price = AH:GetPrice(itemID)
-    if price then
-        local cfg = VoidUI:GetModuleConfig("Auction")
-        local pct = tonumber(cfg.undercutPercent)
-        if pct and pct >= 0 then   -- 0% = match the market (the % box allows it)
-            price = ToSilver(price * (1 - pct / 100))
-        else
-            local undercut = cfg.undercutCopper or 100
-            price = ToSilver(price - undercut)
-        end
-    end
+    if price then price = UndercutPrice(price) end
     if price then
         parent._goldBox:SetText(tostring(math.floor(price / 10000)))
         parent._silverBox:SetText(tostring(math.floor((price % 10000) / 100)))
@@ -3404,10 +3416,9 @@ function SellTab_PostAuction(parent)
     -- needs-confirmation post was silently never confirmed.
     local args
     if isCommodity then
-        -- PostCommodity silently fails when unitPrice has any copper component.
-        -- Round to whole silver before posting commodities.
-        local commodityPrice = math.floor(totalPrice / 100) * 100
-        if commodityPrice < 100 then commodityPrice = 100 end  -- 1s minimum
+        -- PostCommodity silently fails when unitPrice has any copper component
+        -- (retail). ToSilver rounds to whole silver there, whole copper on Forever.
+        local commodityPrice = ToSilver(totalPrice)
         if commodityPrice ~= totalPrice then
             print(("|cffffaa00VoidAH|r: Commodity price rounded to %s (PostCommodity rejects copper)."):format(
                 VoidUI:FormatMoney(commodityPrice)))
@@ -4632,14 +4643,7 @@ end
 -- % undercut SellTab_SetItem uses (the old path used the legacy flat 1s undercut,
 -- silently replacing the % price) and rebuild the info line instead of appending.
 function ApplySellLivePrice(parent, perUnit)
-    local cfg = VoidUI:GetModuleConfig("Auction")
-    local pct = tonumber(cfg.undercutPercent)
-    local price
-    if pct and pct >= 0 then   -- 0% = match the market (the % box allows it)
-        price = ToSilver(perUnit * (1 - pct / 100))
-    else
-        price = ToSilver(perUnit - (cfg.undercutCopper or 100))
-    end
+    local price = UndercutPrice(perUnit)
     -- Never replace a price the player typed while the search was in flight.
     if not sellPending._priceEdited then
         parent._goldBox:SetText(tostring(math.floor(price / 10000)))
