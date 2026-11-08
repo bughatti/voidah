@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.7.0] — 2026-11-07
+
+### Added
+- **Deals has a type picker.** The button at the top left of Deals switches between kinds of money-makers instead of adding more tabs:
+  - **Below market**: the old Deals list, listings under their usual price.
+  - **Vendor -> AH** (WoW Forever, with VoidGPS): everything vendors sell all year, with the nearest vendor, the vendor price, the AH price and your profit after the AH cut, biggest first. Pick **Recipes**, **Pets** (Cat Carriers, Parrot Cages...), **Gear**, **Reagents**, **Consumables** or **All**; **Limited only** shows the limited-stock goods people buy up and resell. Hover for every vendor that has it; click for a route to the nearest one.
+  - **AH -> Vendor**: listings cheaper than what a merchant pays for them. Buy, then sell to any vendor. Click to look it up in Browse.
+  - **Crafting**: every recipe you know, what its materials cost (your scans, merchants, vendors) and what it sells for here after the AH cut, most profit first, with the recipe's skill color. Hover for the materials. Needs VoidProf 1.2.1 and each profession window opened once.
+  - **Disenchant** (WoW Forever, for enchanters): greens and blues that break into more than they cost, a rough estimate from Classic's disenchant odds (Forever's may differ) and your scans of dust, essences and shards, with the Enchanting skill each needs.
+- Profit uses the AH cut VoidAH learned from your own sales (5% until it has).
+
 ## [1.6.0] — 2026-11-06
 
 ### Added

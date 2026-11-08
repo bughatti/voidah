@@ -3769,18 +3769,25 @@ end
 -- TAB 4: Deals
 ----------------------------------------------------------------------
 function BuildDealsTab(parent)
-    local label = parent:CreateFontString(nil, "OVERLAY")
-    VoidUI:SetFont(label, 11, "OUTLINE")
-    label:SetPoint("TOPLEFT", 10, -4)
-    label:SetText("|cff00ffffDeals — Items below market value|r")
+    -- "Below market" is one deal type of several (DealModes.lua adds the type picker and
+    -- the others); its widgets live in their own frame so the picker can swap it out
+    local below = CreateFrame("Frame", nil, parent)
+    below:SetAllPoints()
+    parent._below = below
 
-    local refreshBtn = CreateButton(parent, 120, 24, "Find Deals", function()
+    local label = below:CreateFontString(nil, "OVERLAY")
+    VoidUI:SetFont(label, 11, "OUTLINE")
+    label:SetPoint("TOPLEFT", VoidAH_BuildDealModes and 190 or 10, -8)
+    label:SetText(VoidAH_BuildDealModes and "|cff888888Listings under their usual price (your scans)|r"
+        or "|cff00ffffDeals — Items below market value|r")
+
+    local refreshBtn = CreateButton(below, 120, 24, "Find Deals", function()
         FindDeals()
     end)
     refreshBtn:SetPoint("TOPRIGHT", -10, -4)
 
     -- Column headers
-    local colHeader = CreateFrame("Frame", nil, parent)
+    local colHeader = CreateFrame("Frame", nil, below)
     colHeader:SetPoint("TOPLEFT", 10, -34)
     colHeader:SetPoint("TOPRIGHT", -10, -34)
     colHeader:SetHeight(20)
@@ -3807,7 +3814,7 @@ function BuildDealsTab(parent)
     end
 
     -- Deals list
-    local listContainer = CreateFrame("Frame", nil, parent)
+    local listContainer = CreateFrame("Frame", nil, below)
     listContainer:SetPoint("TOPLEFT", 10, -56)
     listContainer:SetPoint("BOTTOMRIGHT", -10, 4)
 
@@ -3831,6 +3838,10 @@ function BuildDealsTab(parent)
         row:SetPoint("TOPLEFT", 0, -(i - 1) * ROW_HEIGHT)
         row:Hide()
         parent._rows[i] = row
+    end
+    if VoidAH_BuildDealModes then
+        local ok, err = pcall(VoidAH_BuildDealModes, parent, below)
+        if not ok then print("|cffff5050VoidAH:|r Deals types error: " .. tostring(err)) end
     end
 end
 

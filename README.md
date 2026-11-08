@@ -31,8 +31,12 @@ VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Se
 - Any item you can sell shows its **AH price, what you'd get after the cut, and whether to list it or vendor it**, from your own scans. Soulbound items are left alone
 
 ### Deals
-- **Flags listings priced well below** your scanned price history
-- One-click buy on bargain commodities
+A type picker at the top left switches between kinds of deals:
+- **Below market**: listings priced well below your scanned price history, with one-click buy on bargain commodities
+- **Vendor -> AH** (WoW Forever, with VoidGPS): what vendors sell for less than the AH pays: **recipes**, **pets**, **gear**, **reagents**, **consumables**, with the nearest vendor and your **profit after the AH cut**. **Limited only** shows the limited-stock goods people buy up and resell. Click a row for the way to the vendor
+- **AH -> Vendor**: listings cheaper than what a merchant pays for them: buy, then sell to any vendor
+- **Crafting** (with VoidProf): every recipe you know, material cost vs what it sells for, most profit first
+- **Disenchant** (WoW Forever, enchanters): greens and blues that break into more than they cost, from Classic's disenchant odds
 
 ### Scan
 - **Full or browse scan** with a progress bar, throttled to stay within Blizzard's limits
