@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.7.1] — 2026-11-07
+
+### Fixed
+- **Vendor -> AH only lists what vendors sell for gold.** Recipes bought with Merchant's Favor (WoW Forever's Azeroth Commerce Authority) aren't a gold flip, so they're left out, and the vendor shown is the nearest one that takes gold. The "Sold by" tooltip marks Merchant's Favor vendors. (Needs VoidGPS 0.3.2.)
+
 ## [1.7.0] — 2026-11-07
 
 ### Added

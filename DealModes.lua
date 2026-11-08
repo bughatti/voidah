@@ -195,6 +195,29 @@ local V = { kind = "r", limitedOnly = false, pricedOnly = false }
 
 local function goodsApi() return VoidGPS and VoidGPS.Goods end
 
+-- VoidGPS 0.3.2+ tags offers that cost Merchant's Favor / reputation / a currency
+-- (v.cost) and sets e.gold when some vendor takes plain gold. Those others aren't a
+-- gold buy, so they never count as one here (older VoidGPS: everything is gold).
+local function soldForGold(e)
+    if not (VoidGPS and VoidGPS.Costs) then return true end
+    return e.gold and true or false
+end
+local function goldVendor(e)
+    for _, v in ipairs(e.vendors) do if not v.cost then return v end end
+    return e.vendors[1]
+end
+local function costTag(v)
+    local c = v and v.cost
+    if not c then return (v and v.rep) and (" |cffff9f40(" .. v.rep .. ")|r") or "" end   -- gold, needs reputation
+    if c.favor then
+        return " |cffff9f40(" .. (type(c.favor) == "number" and (c.favor .. " ") or "") .. "Merchant's Favor"
+            .. (c.rep and (", " .. c.rep) or "") .. ")|r"
+    end
+    if c.other then return " |cffff9f40(" .. c.other .. ")|r" end
+    if c.rep then return " |cffff9f40(" .. c.rep .. ")|r" end
+    return ""
+end
+
 local function vendorData()
     local Goods = goodsApi()
     if not Goods then return {} end
@@ -203,7 +226,7 @@ local function vendorData()
     local out = {}
     for _, e in ipairs(Goods:All(V.kind)) do
         -- (no gold price: bought with tokens or currency, so a "profit" would be made up)
-        if (e.buy or 0) > 0 and (not V.limitedOnly or e.limited) then
+        if (e.buy or 0) > 0 and soldForGold(e) and (not V.limitedOnly or e.limited) then
             local ah = AH and AH.GetPrice and AH:GetPrice(e.item)
             if ah and ah <= 0 then ah = nil end
             if not V.pricedOnly or ah then
@@ -231,7 +254,7 @@ local function paintVendorRow(row, d)
     local e, c = d.e, row._c
     itemCell(row, c[1], e.item, e.name)
     c[2]:SetText(e.kind == "r" and ((PROF[e.line] or "Recipe") .. (e.skill and e.skill > 0 and (" " .. e.skill) or "")) or (KIND[e.kind] or ""))
-    local v = e.vendors[1]
+    local v = goldVendor(e)
     c[3]:SetText(v and (v.name .. " |cff888888· " .. zoneName(v.map) .. "|r"
         .. (#e.vendors > 1 and (" |cff888888+" .. (#e.vendors - 1) .. "|r") or "")) or "?")
     c[4]:SetText(e.limited and "|cffffd200Limited|r" or "")
@@ -385,7 +408,7 @@ local function unitPrice(item)
     if p and p > 0 then return p end
     local Goods = goodsApi()
     local e = Goods and Goods:Get(item)
-    if e and e.buy and e.buy > 0 then return e.buy / math.max(1, e.qty or 1) end
+    if e and e.buy and e.buy > 0 and soldForGold(e) then return e.buy / math.max(1, e.qty or 1) end
     return nil
 end
 
@@ -736,9 +759,9 @@ if TooltipDataProcessor and Enum.TooltipDataType then
         tt:AddLine("Sold by:", 0, 0.78, 1)
         for k, v in ipairs(e.vendors) do
             if k > 6 then tt:AddLine(("... and %d more"):format(#e.vendors - 6), 0.6, 0.6, 0.6); break end
-            tt:AddDoubleLine(v.name .. (v.limited and " |cffffd200(limited)|r" or ""),
+            tt:AddDoubleLine(v.name .. (v.limited and " |cffffd200(limited)|r" or "") .. costTag(v),
                 zoneName(v.map) .. (v.yards and (" · " .. math.floor(v.yards) .. " yd") or ""), 1, 1, 1, 0.7, 0.7, 0.7)
         end
-        tt:AddLine("Click: the way to the nearest one · Shift-click: link", 0.5, 0.8, 0.5)
+        tt:AddLine("Click: the way to the nearest one for gold · Shift-click: link", 0.5, 0.8, 0.5)
     end)
 end
