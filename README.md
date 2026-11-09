@@ -1,5 +1,7 @@
 # VoidAH
 
+**Works on:** WoW Midnight · WoW Forever
+
 **A full Auction House replacement with built-in profession leveling plans and shopping lists.**
 
 VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Sell, My Auctions, Deals, Scan, and **Professions**. With **VoidProf** installed, the Professions tab shows what's left to buy to level any of the 9 crafting professions, priced from your Auction House data, with one-click Buy buttons that track how many you've bought as you go.
@@ -78,7 +80,7 @@ You rarely need it — VoidAH opens automatically when you talk to an Auctioneer
 
 ## Getting Started
 
-1. Install with the CurseForge app, or copy the `VoidAH` folder into `World of Warcraft/_retail_/Interface/AddOns/`.
+1. Install with the CurseForge app, or copy the `VoidAH` folder into `World of Warcraft/_retail_/Interface/AddOns/` (WoW Forever: `_forever_/Interface/AddOns/`).
 2. Restart WoW or `/reload`.
 3. Talk to any Auctioneer — VoidAH replaces the default window.
 
@@ -97,8 +99,8 @@ You rarely need it — VoidAH opens automatically when you talk to an Auctioneer
 
 ## Compatibility
 
-- **WoW 12.1.5** (Midnight Season 2)
-- **WoW Forever** supported too
+- **WoW Midnight** 12.1.5 (Season 2)
+- **WoW Forever**
 - Standalone — nothing else to install
 - Works alongside Auctionator, TSM, and other AH addons (only one can be the active AH window at a time)
 
