@@ -3,7 +3,7 @@
 ## Title: |cff00c7ffVoidAH|r
 ## Notes: Standalone Auction House from VoidUI Discord: https://discord.gg/7ZHmx7zMDh
 ## Author: Vede
-## Version: 1.7.2
+## Version: 1.8.0
 ## SavedVariables: VoidUIAuctionDB
 ## OptionalDeps: VoidProf
 
@@ -20,4 +20,5 @@ Pricing.lua
 Money.lua
 AuctionUI.lua
 DealModes.lua
+Anywhere.lua
 VoidHubBundle.lua

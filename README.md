@@ -65,13 +65,18 @@ A type picker at the top left switches between kinds of deals:
 - VoidGear's own **Search AH** button searches right here in VoidAH's Browse tab
 - Without VoidGear, VoidAH works exactly the same; the section just isn't there
 
+### The Auction House, anywhere
+- **Look things up away from the AH**: `/vah` (or the VoidAH icon on the Void hub, or VoidBags' **AH** button) opens the auction house as it was on your last visit, wherever you are: every item VoidAH has seen with its lowest buyout, how many were listed and in how many auctions, how long ago, and an arrow when it's cheaper (green) or dearer (red) than its 7-day average
+- **Search, categories, sort by any column**, item tooltips, shift-click to link. It's read-only, and it never changes while it's open
+- **Plan away, buy there**: **+ List** puts an item on your shopping list, which VoidAH checks by itself the next time you open the Auction House. **My list only** shows just those
+
 ---
 
 ## Slash Commands
 
 | Command | What it does |
 |---|---|
-| `/vah` | Bring up the VoidAH panel at an Auctioneer if it didn't open on its own |
+| `/vah` | Away from an Auctioneer: the Auction House from your last visit. At one: bring up the VoidAH panel if it didn't open on its own |
 | `/vahmoney` | Print your selling ledger (today, 7 days, all characters) |
 
 You rarely need it — VoidAH opens automatically when you talk to an Auctioneer.

@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.8.0] — 2026-11-09
+
+- **The Auction House, anywhere.** Away from an Auctioneer, `/vah` (or the VoidAH icon on the Void hub) opens the auction house as it was on your last visit: every item VoidAH has seen with its lowest buyout, how many were listed and in how many auctions, how long ago, and a trend arrow against its 7-day average (green = cheaper than usual, red = dearer). Search, categories, click a column to sort. Read-only: it's for looking things up while you farm or plan.
+- **Plan away, buy there:** **+ List** puts an item on VoidAH's shopping list, which VoidAH checks by itself the next time you open the Auction House. **My list only** shows just those.
+- Full scans now also remember how many of each item were listed.
+
 ## [1.7.2] — 2026-11-09
 
 - **Fixed: box borders missing a side.** Depending on where a window sat on screen, its left, right or bottom line could vanish. Borders are now exactly one screen pixel and can't round away.

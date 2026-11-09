@@ -112,7 +112,9 @@ function AH:GetPrice(itemID)
     return nil
 end
 
-function AH:SetPrice(itemID, minBuyout)
+-- qty / auctions / name (optional): how many were listed, in how many auctions, and the item's
+-- name, for the "Auction House anywhere" window; a call without them keeps the last values.
+function AH:SetPrice(itemID, minBuyout, qty, auctions, name)
     if not itemID or not minBuyout or minBuyout <= 0 then return end
     local db = GetRealmDB()
     local key = tostring(itemID)
@@ -122,6 +124,10 @@ function AH:SetPrice(itemID, minBuyout)
     local entry = db[key]
     entry.m = minBuyout
     entry.t = time()
+    -- a quantity without an auction count (a browse search) clears the old count: "2 in 50"
+    -- would mix two different scans (Sol review)
+    if qty then entry.q, entry.n = qty, auctions end
+    if type(name) == "string" and name ~= "" then entry.nm = name end
 
     -- Update history
     if not entry.h then entry.h = {} end
@@ -134,6 +140,11 @@ function AH:SetPrice(itemID, minBuyout)
         entry.h[day] = { minBuyout, minBuyout }
     end
     PruneHistory(entry)
+end
+
+-- Every item this realm's scans have seen: { ["itemID"] = { m, t, h, q, n, nm }, ... } (read-only use)
+function AH:AllPrices()
+    return GetRealmDB()
 end
 
 function AH:GetPriceAge(itemID)
@@ -313,6 +324,9 @@ function AH:StartFullScan()
     self.scanTotal = 0
     self.scanProcessed = 0
     self._scanMin = {}   -- this scan's lowest per-unit buyout per item (applied at finish)
+    -- and its listing counts / names: fresh every scan, so a cancelled one can't add to the
+    -- next one's totals (Sol review)
+    self._scanQty, self._scanN, self._scanName = {}, {}, {}
     self._scanGen = (self._scanGen or 0) + 1   -- delayed callbacks of an older scan check this
 
     self:_Enqueue(function()
@@ -330,7 +344,7 @@ function AH:StartFullScan()
                and not self._processingBatch then
                 self.scanning = false
                 self.scanType = nil
-                self._scanMin = nil
+                self._scanMin, self._scanQty, self._scanN, self._scanName = nil, nil, nil, nil
                 print("|cff00ffffVoidAH|r: Full scan got no data from Blizzard (it allows one every 15 min). Try again later.")
                 if AH.OnScanComplete then SafeCall(AH.OnScanComplete, AH, "full") end
             end
@@ -361,8 +375,19 @@ function AH:_ProcessReplicateBatch(startIndex, totalCount)
                 itemID = itemID,
                 buyout = buyoutPrice,
                 count = count or 1,
+                name = name,
             }
         end)
+        -- every listing, also bid-only ones: how many are up and in how many auctions, and
+        -- the name, for VoidAH's "Auction House anywhere" window (2026-11-09)
+        if ok and data and data.itemID then
+            self._scanQty = self._scanQty or {}
+            self._scanN = self._scanN or {}
+            self._scanName = self._scanName or {}
+            self._scanQty[data.itemID] = (self._scanQty[data.itemID] or 0) + (data.count or 1)
+            self._scanN[data.itemID] = (self._scanN[data.itemID] or 0) + 1
+            if type(data.name) == "string" and data.name ~= "" then self._scanName[data.itemID] = data.name end
+        end
         if ok and data and data.itemID and data.buyout and data.buyout > 0 then
             -- Track the lowest listing seen THIS scan. (Was compared against the
             -- stored price, so a price could only ever go DOWN -- every item kept
@@ -393,10 +418,11 @@ end
 
 function AH:_FinishFullScan()
     -- Every item listed right now gets today's lowest price (up OR down).
+    local qty, n, names = self._scanQty or {}, self._scanN or {}, self._scanName or {}
     for itemID, price in pairs(self._scanMin or {}) do
-        self:SetPrice(itemID, price)
+        self:SetPrice(itemID, price, qty[itemID], n[itemID], names[itemID])
     end
-    self._scanMin = nil
+    self._scanMin, self._scanQty, self._scanN, self._scanName = nil, nil, nil, nil
     self.scanning = false
     self.scanType = nil
     self.scanProgress = 1
@@ -475,7 +501,7 @@ function AH:_ProcessBrowseResults()
 
     -- One itemID can have several result rows (item levels, variants); the price
     -- is the cheapest of them, not whichever row came last.
-    local cheapest = {}
+    local cheapest, qty = {}, {}
     for _, result in ipairs(results) do
         if result.itemKey and result.minPrice then
             local itemID = AH.SafeNum(result.itemKey.itemID)
@@ -483,10 +509,12 @@ function AH:_ProcessBrowseResults()
             if itemID and price and price > 0 and (not cheapest[itemID] or price < cheapest[itemID]) then
                 cheapest[itemID] = price
             end
+            local q = AH.SafeNum(result.totalQuantity)
+            if itemID and q then qty[itemID] = (qty[itemID] or 0) + q end
         end
     end
     for itemID, price in pairs(cheapest) do
-        self:SetPrice(itemID, price)
+        self:SetPrice(itemID, price, qty[itemID], nil, C_Item.GetItemNameByID(itemID))
     end
 
     self._browseCatItems = #results
@@ -583,6 +611,7 @@ function AH:AbortScan()
         self.scanType = nil
         self._processingBatch = false
         self._scanGen = (self._scanGen or 0) + 1   -- orphan this scan's pending timers
+        self._scanQty, self._scanN, self._scanName = nil, nil, nil
         self:ClearThrottleQueue()
         print("|cff00ffffVoidAH|r: Scan aborted.")
         if AH.OnScanComplete then SafeCall(AH.OnScanComplete, AH, "aborted") end

@@ -4178,6 +4178,21 @@ function RemoveShoppingEntry(index, parent)
     if parent then UpdateShoppingList(parent) end
 end
 
+-- For the "Auction House anywhere" window (Anywhere.lua): the shopping list is checked
+-- automatically the next time you open the AH, so adding from anywhere = plan away, buy there.
+function AH:ShoppingIndex(itemID)
+    local cfg = VoidUI:GetModuleConfig("Auction")
+    for i, e in ipairs(cfg.shoppingList or {}) do
+        if e.itemID == itemID then return i end
+    end
+end
+
+function AH:ToggleShopping(itemID, name)
+    local i = self:ShoppingIndex(itemID)
+    if i then RemoveShoppingEntry(i) else AddShoppingEntry(itemID, name or ("Item " .. itemID), 0) end
+    return self:ShoppingIndex(itemID) ~= nil
+end
+
 ----------------------------------------------------------------------
 -- Scan every T (AH/VT) item currently in the sell list. Populates the
 -- price DB, then rebuilds/resorts so profitable items float to the top.
