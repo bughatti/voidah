@@ -2,6 +2,33 @@
 -- VoidUI AuctionUI Module
 -- Full AH replacement panel: Browse, Sell, My Auctions, Deals, Scan
 ----------------------------------------------------------------------
+-- Borders are one screen pixel (tools/cmd/pixelfix, 2026-11-09). WoW snaps each border
+-- piece to the pixel grid, and a thin line on a fractional position can snap to 0 px: a side
+-- of a box vanishes. VoidPX() asks for one real pixel, and the hook below (installed once, by
+-- the first Void addon loaded) turns snapping off on the edges of flat WHITE8X8 borders, like
+-- Blizzard's NineSliceUtil.DisableSharpening, so a 1 px line always covers a pixel.
+local function VoidPX()
+    local s = UIParent and UIParent:GetEffectiveScale()
+    if s and s > 0 and PixelUtil and PixelUtil.GetPixelToUIUnitFactor then return PixelUtil.GetPixelToUIUnitFactor() / s end
+    return 1
+end
+if not _G.__VoidBorderHook and hooksecurefunc and NineSliceUtil and NineSliceUtil.ApplyLayout then
+    _G.__VoidBorderHook = true
+    local EDGES = { "TopEdge", "BottomEdge", "LeftEdge", "RightEdge",
+                    "TopLeftCorner", "TopRightCorner", "BottomLeftCorner", "BottomRightCorner" }
+    hooksecurefunc(NineSliceUtil, "ApplyLayout", function(c)
+        local i = type(c) == "table" and c.backdropInfo
+        local e = i and i.edgeFile
+        if type(e) ~= "string" or not e:lower():find("white8x8", 1, true) or (tonumber(i.edgeSize) or 0) > 3 then return end
+        for _, k in ipairs(EDGES) do
+            local t = c[k]
+            if t and t.SetSnapToPixelGrid then
+                t:SetSnapToPixelGrid(false)
+                t:SetTexelSnappingBias(0)
+            end
+        end
+    end)
+end
 local AH = VoidUI.AH
 
 -- WoW Forever's client drops the old global item functions (retail still
@@ -533,7 +560,7 @@ local function CreateEditBox(parent, width, height, placeholder)
     box:SetBackdrop({
         bgFile = VoidUI.media.flat,
         edgeFile = VoidUI.media.flat,
-        edgeSize = 1,
+        edgeSize = VoidPX(),
     })
     box:SetBackdropColor(0.08, 0.08, 0.08, 1)
     box:SetBackdropBorderColor(0.2, 0.2, 0.2, 1)
@@ -801,7 +828,7 @@ local function CreatePanel()
         local btn = CreateFrame("Button", nil, panel, "BackdropTemplate")
         btn:SetSize(tabW, 26)
         btn:SetPoint("TOPLEFT", panel, "TOPLEFT", (i - 1) * tabW, -30)
-        btn:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+        btn:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = VoidPX() })
         btn:SetBackdropColor(0.06, 0.06, 0.08, 1)
         btn:SetBackdropBorderColor(0.2, 0.2, 0.22, 1)
 
@@ -2329,7 +2356,7 @@ function BuildBrowseTab(parent)
     local qtyBox = CreateFrame("EditBox", nil, confirmBar, "BackdropTemplate")
     qtyBox:SetSize(50, 22)
     qtyBox:SetPoint("LEFT", qtyLabel, "RIGHT", 4, 0)
-    qtyBox:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+    qtyBox:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = VoidPX() })
     qtyBox:SetBackdropColor(0.1, 0.1, 0.12, 1)
     qtyBox:SetBackdropBorderColor(0.3, 0.3, 0.35, 1)
     qtyBox:SetAutoFocus(false)
@@ -2757,7 +2784,7 @@ local function CreateSellItemRow(parent, index)
     floorBox:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
         edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 1,
+        edgeSize = VoidPX(),
     })
     floorBox:SetBackdropColor(0.05, 0.05, 0.07, 0.95)
     floorBox:SetBackdropBorderColor(0.25, 0.60, 0.85, 1)
@@ -2788,7 +2815,7 @@ local function CreateSellItemRow(parent, index)
     scanBtn:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8X8",
         edgeFile = "Interface\\Buttons\\WHITE8X8",
-        edgeSize = 1,
+        edgeSize = VoidPX(),
     })
     scanBtn:SetBackdropColor(0.12, 0.40, 0.60, 0.9)
     scanBtn:SetBackdropBorderColor(0.25, 0.70, 0.95, 1)
