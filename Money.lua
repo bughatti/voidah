@@ -25,6 +25,7 @@
 VoidUI = VoidUI or {}
 local M = {}
 VoidAH_Money = M
+local ToolKept = (select(2, ...) or {}).ToolKept   -- ForeverTools.lua (WoW Forever; nil on retail / in voidah-test)
 
 local DEFAULT_CUT = 0.05
 local PRUNE_DAYS = 120
@@ -340,6 +341,18 @@ local function OnItemTooltip(tt, data)
         end
         -- on a merchant's page, never the list-or-vendor advice: an item bought with tokens / other
         -- currency (no gold price to compare) just keeps the AH line (Sol review)
+        return
+    end
+    -- a tool / class item this character needs (ForeverTools.lua): no list-or-vendor advice, say it's kept
+    -- (the user's fishing pole tooltip said "Worth listing: +91c", 2026-11-10)
+    -- the copy you're hovering (bag items only): one per kind is kept, spares get the normal advice
+    local keptFor
+    if ToolKept and data.guid and C_Item.GetItemLocation then
+        local ok, loc = pcall(C_Item.GetItemLocation, data.guid)
+        if ok and loc and loc.IsBagAndSlot and loc:IsBagAndSlot() then keptFor = ToolKept(loc:GetBagAndSlot()) end
+    end
+    if keptFor then
+        tt:AddLine(("  Kept: you need it (%s). VoidAH won't list it."):format(keptFor), 0.85, 0.75, 0.55)
         return
     end
     if vendor > 0 then

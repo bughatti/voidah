@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0] — 2026-11-10
+
+### Added (WoW Forever)
+- **Your tools stay off the Sell list.** Profession tools, your fishing pole, cooking-fire items and class items (rogue poisons and powders, other classes' reagents) aren't offered for sale, so a run of listings can't post your Mining Pick. One copy of each tool is kept; a spare can be listed.
+- **Drop box on the Sell tab:** drag any item onto the item box to sell it, including a kept tool you really want to sell (a better pole came along).
+- **Tooltip:** "Kept: you need it (Fishing). VoidAH won't list it." on those items.
+
 ## [1.9.1] — 2026-11-10
 
 ### Changed

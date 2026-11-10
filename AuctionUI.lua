@@ -299,6 +299,7 @@ local PROF_REAGENT_MAP = {
 -- WoW Forever: material -> professions with a Forever recipe that uses it (ForeverReagents.lua,
 -- generated; nil on retail). This addon's own copy: VoidAH never reads VoidBags' tables.
 local FOREVER_REAGENTS = select(2, ...).FOREVER_REAGENTS
+local FOREVER_TOOL_KEPT = select(2, ...).ToolKept   -- ForeverTools.lua: is this bag copy the one kept (nil on retail)
 
 local REAGENT_TO_PROF = {}
 for prof, subs in pairs(PROF_REAGENT_MAP) do
@@ -2517,6 +2518,10 @@ local scanTip = CreateFrame("GameTooltip", "VoidUI_SellScanTip", nil, "GameToolt
 local function IsUnsellable(bag, slot)
     local loc = ItemLocation:CreateFromBagAndSlot(bag, slot)
     if not C_Item.DoesItemExist(loc) then return true end
+    -- WoW Forever: a tool / class item this character needs (ForeverTools.lua, VoidAH's own copy: no
+    -- cross-addon reads here) stays off the Sell list. The user, 2026-11-10: the Mining Pick went up in
+    -- the middle of a run of recipe listings. A deliberate shift-click still puts it on the Sell tab.
+    if FOREVER_TOOL_KEPT and FOREVER_TOOL_KEPT(bag, slot) then return true end   -- one copy per kind; spares stay sellable
     if C_Item.IsBound(loc) then return true end
     -- "Warbound until equipped" items aren't bound yet (IsBound = false) but
     -- still can't be listed -- they leaked into the sell list.
@@ -3018,8 +3023,22 @@ function BuildSellTab(parent)
     -- Sits where the item icon/name appear (the price row below is always
     -- visible, so a CENTER anchor drew this text underneath the duration buttons).
     dropLabel:SetPoint("TOP", 0, -28)
-    dropLabel:SetText("|cff555555Pick an item from the list or your bags to sell|r")
+    dropLabel:SetText("|cff555555Pick an item from the list, or drag one here to sell it|r")
     parent._dropLabel = dropLabel
+
+    -- Drop box (the user, 2026-11-10: "we need a drop box though in case someone wants to sell it, for
+    -- example i get a better pole"): drag any bag item here, kept tools included, to sell it on purpose.
+    -- Same as Blizzard's sell frame: take the cursor's item location, then put the item back.
+    itemFrame:EnableMouse(true)
+    local function TakeCursorItem()
+        local item = C_Cursor and C_Cursor.GetCursorItem and C_Cursor.GetCursorItem()
+        if item and item.IsBagAndSlot and item:IsBagAndSlot() then
+            ClearCursor()
+            SellTab_SetItem(parent, item)
+        end
+    end
+    itemFrame:SetScript("OnReceiveDrag", TakeCursorItem)
+    itemFrame:SetScript("OnMouseUp", function() if GetCursorInfo() == "item" then TakeCursorItem() end end)
 
     -- Item icon + name
     local sellIcon = itemFrame:CreateTexture(nil, "ARTWORK")

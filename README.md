@@ -25,6 +25,7 @@ VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Se
 - **A second look before a bad price:** posting at under half an item's usual price, or for less than a vendor pays, asks you first
 - **What a listing really earns you:** the deposit (back if it sells, lost if not), the AH's cut, what you get, and whether that beats the vendor ("List it: +2s over vendor" or "Vendor it")
 - Prices follow each auction house's own rules (whole silver on retail; on WoW Forever, copper for stackable goods and whole silver for single items); soulbound and warbound items are hidden automatically
+- **WoW Forever: your tools stay off the list.** Your profession tools, fishing pole, cooking-fire items and class items (rogue poisons and powders, other classes' reagents) aren't offered for sale, so a run of listings can't post your Mining Pick. One copy of each tool is kept; a spare can be listed. **To sell a kept item on purpose, drag it onto the item box** at the top of the Sell tab
 
 ### My Auctions
 - All your active listings in one view, with a **cancel button** on each row
@@ -32,6 +33,7 @@ VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Se
 
 ### Item tooltips
 - Any item you can sell shows its **AH price, what you'd get after the cut, and whether to list it or vendor it**, from your own scans. Soulbound items are left alone
+- **WoW Forever: "Kept: you need it (Fishing)"** under the price of a tool or class item you need, instead of "list it" advice
 - **How fresh the price is:** "· 1h 27m ago" on every price (orange after 6 hours) and "· 1 listed" when a single listing sets it
 - **At a merchant: buy here, resell on the AH.** Items a vendor sells show their real profit after the AH cut ("Buy here 14s 40c, resell: +26s 47c profit each"), and say to check the AH first when the price is old or from one listing
 
