@@ -89,6 +89,7 @@ local function VendorEach(itemOrLink)
     local v = select(11, C_Item.GetItemInfo(itemOrLink))
     return (type(v) == "number" and v > 0) and v or 0
 end
+M.VendorEach = VendorEach
 
 ----------------------------------------------------------------------
 -- Cut rate
@@ -192,6 +193,39 @@ function M.Breakdown(itemOrLink, unitPrice, qty, deposit)
     local vendor = VendorEach(itemOrLink) * qty
     return { gross = gross, cut = cut, net = net, vendor = vendor, deposit = deposit,
              rate = rate, learned = learned, gain = net - vendor }
+end
+
+----------------------------------------------------------------------
+-- Prices read off the Auction House, one rule each (tools/cmd/voidah-test checks these):
+--   an item search result / your own auction: buyoutAmount is already PER ITEM; quantity
+--   counts identical listings grouped together (VoidAH divided by it from v1.1.0 to 1.8.0:
+--   14 listings at 36s read as 2s 57c and the Sell tab priced under it, 2026-11-09);
+--   a full-scan (replicate) row: buyoutPrice is for the whole stack of `count`.
+----------------------------------------------------------------------
+function M.ItemResultUnitPrice(buyoutAmount, quantity)   -- quantity deliberately unused
+    if type(buyoutAmount) ~= "number" or buyoutAmount <= 0 then return nil end
+    return buyoutAmount
+end
+function M.ReplicateUnitPrice(buyoutPrice, count)
+    if type(buyoutPrice) ~= "number" or buyoutPrice <= 0 then return nil end
+    return math.floor(buyoutPrice / math.max(1, count or 1))
+end
+
+-- Is this listing price a likely mistake? Returns a reason ("under half its usual 40s",
+-- "less than a vendor pays") or nil. median / nDays from AH:GetMarketMean (3+ days of data
+-- needed to call a price low); vendorEach = what a vendor pays for one; rate = the AH cut.
+-- The Sell tab asks before posting at such a price (the user, 2026-11-09: "we cant make
+-- these mistakes, people will be pissed").
+function M.PriceWarning(unitPrice, median, nDays, vendorEach, rate)
+    if type(unitPrice) ~= "number" or unitPrice <= 0 then return nil end
+    if median and nDays and nDays >= 3 and median > 0 and unitPrice < median * 0.5 then
+        return "under half its usual price", median
+    end
+    local net = unitPrice - math.floor(unitPrice * (rate or DEFAULT_CUT) + 0.5)
+    if vendorEach and vendorEach > 0 and net < vendorEach then
+        return "less than a vendor pays", vendorEach
+    end
+    return nil
 end
 
 local function Money(c) return VoidUI:FormatMoney(math.max(0, math.floor(c or 0))) end

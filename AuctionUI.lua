@@ -3337,6 +3337,7 @@ function SellTab_SetItem(parent, itemLocation)
     -- Store pending
     sellPending.itemLocation = itemLocation
     sellPending.itemID = itemID
+    sellPending._outlier = nil   -- set again when this item's live price comes in
     sellPending._priceEdited = nil   -- set when the player types a price (live prices then leave it alone)
     sellPending.isCommodity = isCommodity
     -- Single-item listing (whole silver on Forever). Unknown status (data not loaded)
@@ -3440,6 +3441,22 @@ StaticPopupDialogs["VOIDAH_CONFIRM_POST"] = {
     preferredIndex = 3,
 }
 
+-- VoidAH's own check before a likely-mistaken price (SellTab_PostAuction): post anyway, or not.
+StaticPopupDialogs["VOIDAH_LOW_PRICE"] = {
+    text = "%s\n\n%s",
+    button1 = "Post anyway",
+    button2 = "Cancel",
+    OnAccept = function(_, data)
+        if not (data and data.parent) or sellPending.itemID ~= data.itemID then return end
+        sellPending._lowPriceOK = data.price
+        SellTab_PostAuction(data.parent)
+    end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
+
 local function ShowPostConfirm(commodity, args, itemName)
     StaticPopup_Show("VOIDAH_CONFIRM_POST", itemName, nil,
         { commodity = commodity, args = args, itemID = sellPending.itemID })
@@ -3475,6 +3492,27 @@ function SellTab_PostAuction(parent)
     local qty = tonumber(parent._qtyBox:GetText()) or 1
     local duration = sellPending.duration or 3
     local itemName = C_Item.GetItemInfo(sellPending.itemID) or "?"
+
+    -- A price under half the item's usual, or under what a vendor pays, is likely a mistake
+    -- (ours or a typo): ask first. Accept re-runs this from that click (a fresh hardware
+    -- event, so the post is allowed). The user, 2026-11-09: "we cant make these mistakes".
+    -- approval covers that exact price only (Sol: a live update while the popup was up could
+    -- post a lower one); any other price asks again
+    if VoidAH_Money and VoidAH_Money.PriceWarning and sellPending._lowPriceOK ~= totalPrice then
+        local mean, nDays = AH:GetMarketMean(sellPending.itemID, 7)
+        local loc = sellPending.itemLocation
+        local link = C_Item.DoesItemExist(loc) and C_Item.GetItemLink(loc)
+        local vendorEach = VoidAH_Money.VendorEach and VoidAH_Money.VendorEach(link or sellPending.itemID) or 0
+        local why, ref = VoidAH_Money.PriceWarning(totalPrice, mean, nDays, vendorEach, (VoidAH_Money.CutRate()))
+        if why then
+            StaticPopup_Show("VOIDAH_LOW_PRICE",
+                ("Post %s at %s each?"):format(itemName, VoidUI:FormatMoney(totalPrice)),
+                ("That's %s (%s)."):format(why, VoidUI:FormatMoney(ref)),
+                { parent = parent, itemID = sellPending.itemID, price = totalPrice })
+            return
+        end
+    end
+    sellPending._lowPriceOK = nil
 
     local rawStatus = C_AuctionHouse.GetItemCommodityStatus(sellPending.itemLocation)
     local isCommodity = (rawStatus == 2 or sellPending.isCommodity)
@@ -3753,10 +3791,8 @@ local function UpdateMyAuctions()
                 local market = AH:GetPrice(itemID)
                 row._market:SetText(market and VoidUI:FormatMoney(market) or "")
 
+                -- buyoutAmount is already per unit (Blizzard's own My Auctions shows it as is)
                 local perUnit = buyout
-                if qty > 1 and buyout then
-                    perUnit = math.floor(buyout / qty)
-                end
                 local sold = Enum.AuctionStatus and auction.status == Enum.AuctionStatus.Sold
                 if sold then
                     -- Sold, awaiting mail: no undercut verdict, nothing to cancel.
@@ -4789,14 +4825,25 @@ function UpdateSellBreakdown(parent)
     local loc = sellPending.itemLocation
     local link = loc and C_Item.DoesItemExist(loc) and C_Item.GetItemLink(loc)
     local b = VoidAH_Money.Breakdown(link or sellPending.itemID, unit, qty, dep)
-    txt:SetText(VoidAH_Money.BreakdownText(b, exact, ({ "12h", "24h", "48h" })[duration]))
+    local note = sellPending._outlier and ("\n|cffffd200The cheapest listing is far under its usual %s (7-day median): "
+        .. "priced near that, not under the dump. Buying the cheap one to relist can pay.|r"):format(VoidUI:FormatMoney(sellPending._outlier)) or ""
+    txt:SetText(VoidAH_Money.BreakdownText(b, exact, ({ "12h", "24h", "48h" })[duration]) .. note)
 end
 
 -- Live lowest price arrived for the item on the Sell tab: price it with the same
 -- % undercut SellTab_SetItem uses (the old path used the legacy flat 1s undercut,
 -- silently replacing the % price) and rebuild the info line instead of appending.
 function ApplySellLivePrice(parent, perUnit)
-    local price = UndercutPrice(perUnit, nil, sellPending.isItem)
+    -- One listing far under the item's usual price is a dump, not the market: don't chase it
+    -- down. The user, 2026-11-09: Recipe: Heavy Crocolisk Stew was 30-63s for days (40s 4h
+    -- earlier), one listing at 2s 57c, and the tab said "vendor it" for 5s. Under half the
+    -- 7-day median (3+ days of data): price just under the median and say why.
+    local undercutFrom, outlier = perUnit, nil
+    local mean, nDays = AH:GetMarketMean(sellPending.itemID, 7)
+    if mean and nDays and nDays >= 3 and perUnit < mean * 0.5 then
+        undercutFrom, outlier = mean, mean
+    end
+    local price = UndercutPrice(undercutFrom, nil, sellPending.isItem)
     -- Never replace a price the player typed while the search was in flight.
     if not sellPending._priceEdited then
         parent._goldBox:SetText(tostring(math.floor(price / 10000)))
@@ -4805,6 +4852,8 @@ function ApplySellLivePrice(parent, perUnit)
     end
     parent._sellInfo:SetText((sellPending._baseInfo or "") ..
         " | |cff00ff00Current: " .. VoidUI:FormatMoney(perUnit) .. "|r")
+    sellPending._outlier = outlier   -- said under the breakdown (UpdateSellBreakdown)
+    UpdateSellBreakdown(parent)
 end
 
 function AH:OnItemSearchResults(itemKey)
@@ -4821,7 +4870,7 @@ function AH:OnItemSearchResults(itemKey)
                     local buyout = VoidUI.AH.SafeNum(result.buyoutAmount)
                     local qty = VoidUI.AH.SafeNum(result.quantity) or 1
                     if buyout then
-                        livePrice = (qty > 1) and math.floor(buyout / qty) or buyout
+                        livePrice = buyout   -- per item already (quantity = identical listings grouped)
                     end
                 end
             end
@@ -4842,7 +4891,7 @@ function AH:OnItemSearchResults(itemKey)
                     local buyout = VoidUI.AH.SafeNum(result.buyoutAmount)
                     local qty = VoidUI.AH.SafeNum(result.quantity) or 1
                     if buyout then
-                        livePrice = (qty > 1) and math.floor(buyout / qty) or buyout
+                        livePrice = buyout   -- per item already (quantity = identical listings grouped)
                     end
                 end
             end
@@ -4896,7 +4945,9 @@ function AH:OnItemSearchResults(itemKey)
         local buyout = result and VoidUI.AH.SafeNum(result.buyoutAmount)
         if buyout then
             local qty = VoidUI.AH.SafeNum(result.quantity) or 1
-            local perUnit = (qty > 1) and math.floor(buyout / qty) or buyout
+            -- buyoutAmount is per item; quantity counts identical listings grouped together (14 at
+            -- 36s read as 2s 57c each, 2026-11-09: Blizzard's own table shows buyoutAmount as is)
+            local perUnit = buyout
             AH:SetPrice(sellPending.itemID, perUnit)
             ApplySellLivePrice(tabFrames[2], perUnit)
         end

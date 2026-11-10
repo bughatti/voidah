@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.8.1] — 2026-11-09
+
+### Fixed
+- **The Sell tab suggested prices that were far too low** when several identical listings were up. The auction house groups them into one row with a count, and VoidAH divided the price by that count: 14 listings at 36s read as "Current: 2s 57c", and the suggested price was under that. Your own listings on **My Auctions** were misjudged the same way. Fixed everywhere; prices you typed yourself were never changed. Sorry about this one.
+
+### Added
+- **One dumped listing doesn't drag your price down.** If the cheapest listing is under half the item's usual price (its 7-day median, with at least 3 days of scans), the Sell tab prices you near the usual and says why. Buying the cheap one to relist can pay.
+- **A second look before a bad price.** Posting at under half an item's usual price, or for less than a vendor would pay you, asks you to confirm first.
+
 ## [1.8.0] — 2026-11-09
 
 - **The Auction House, anywhere.** Away from an Auctioneer, `/vah` (or the VoidAH icon on the Void hub) opens the auction house as it was on your last visit: every item VoidAH has seen with its lowest buyout, how many were listed and in how many auctions, how long ago, and a trend arrow against its 7-day average (green = cheaper than usual, red = dearer). Search, categories, click a column to sort. Read-only: it's for looking things up while you farm or plan.

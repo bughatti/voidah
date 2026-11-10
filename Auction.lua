@@ -392,7 +392,8 @@ function AH:_ProcessReplicateBatch(startIndex, totalCount)
             -- Track the lowest listing seen THIS scan. (Was compared against the
             -- stored price, so a price could only ever go DOWN -- every item kept
             -- its all-time low and a full scan never corrected a price that rose.)
-            local perUnit = math.floor(data.buyout / data.count)
+            local perUnit = VoidAH_Money and VoidAH_Money.ReplicateUnitPrice(data.buyout, data.count)
+                or math.floor(data.buyout / math.max(1, data.count or 1))
             self._scanMin = self._scanMin or {}
             local seen = self._scanMin[data.itemID]
             if not seen or perUnit < seen then self._scanMin[data.itemID] = perUnit end

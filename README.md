@@ -21,7 +21,8 @@ VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Se
 
 ### Sell
 - Stack-size and total-quantity inputs with a **deposit calculator**
-- **Smart undercut** — fills in a price just below the cheapest listing
+- **Smart undercut** — fills in a price just below the cheapest listing. One listing dumped far under the item's usual price doesn't drag yours down: it prices near the usual and says why
+- **A second look before a bad price:** posting at under half an item's usual price, or for less than a vendor pays, asks you first
 - **What a listing really earns you:** the deposit (back if it sells, lost if not), the AH's cut, what you get, and whether that beats the vendor ("List it: +2s over vendor" or "Vendor it")
 - Prices follow each auction house's own rules (whole silver on retail; on WoW Forever, copper for stackable goods and whole silver for single items); soulbound and warbound items are hidden automatically
 
