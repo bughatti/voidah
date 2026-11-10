@@ -26,7 +26,13 @@ local KNOWN_CLASS = { [7] = true, [0] = true, [9] = true, [4] = true, [2] = true
 local frame, rows, scroll, search, catBtns, onlyList, sumText
 local state = { cat = 1, sort = "name", desc = false, offset = 0, list = {}, onlyList = false }
 
-local function AH() return VoidUI.AH end
+-- VoidAH's own price database only: the old VoidUI addon, when it's enabled too, puts its older
+-- auction module at VoidUI.AH without AllPrices (retail test, 2026-11-10: "Anywhere.lua:337: attempt to
+-- call a nil value" with VoidUI on). Then the window just has no data instead of an error.
+local function AH()
+    local a = VoidUI and VoidUI.AH
+    return (a and a.AllPrices) and a or nil
+end
 
 local function ago(t)
     if not t or t <= 0 then return "?" end
@@ -109,7 +115,7 @@ local function paint()
         end
     end
     local newest = 0
-    for _, e in pairs(AH():AllPrices() or {}) do
+    for _, e in pairs((AH() and AH():AllPrices()) or {}) do
         if type(e) == "table" and (e.t or 0) > newest then newest = e.t end
     end
     local nameless = state.nameless or 0

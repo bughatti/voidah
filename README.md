@@ -32,6 +32,8 @@ VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Se
 
 ### Item tooltips
 - Any item you can sell shows its **AH price, what you'd get after the cut, and whether to list it or vendor it**, from your own scans. Soulbound items are left alone
+- **How fresh the price is:** "· 1h 27m ago" on every price (orange after 6 hours) and "· 1 listed" when a single listing sets it
+- **At a merchant: buy here, resell on the AH.** Items a vendor sells show their real profit after the AH cut ("Buy here 14s 40c, resell: +26s 47c profit each"), and say to check the AH first when the price is old or from one listing
 
 ### Deals
 A type picker at the top left switches between kinds of deals:

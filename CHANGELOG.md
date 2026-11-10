@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.9.1] — 2026-11-10
+
+### Changed
+- **Price tooltips say how fresh the price is:** "AH 43s each · 1 listed · 1h 27m ago". The age is always shown and turns orange after 6 hours, when the price may have changed; "1 listed" (from your last full scan) warns when one listing sets the price.
+- **At a merchant, the real profit of buying to resell:** hovering an item a vendor sells now shows "Buy here 14s 40c, resell on the AH: +26s 47c profit each", with the vendor's stock when it's limited. Before, it compared the AH with what a vendor *pays you* for the item ("+39s over vendor"), which isn't the deal when you're buying it. When the profit rests on one listing or an old price, it says to check the AH first.
+
+### Fixed
+- **Auction House anywhere** no longer errors when the old VoidUI addon is enabled at the same time.
+
 ## [1.9.0] — 2026-11-10
 
 ### Added (WoW Forever)

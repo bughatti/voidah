@@ -277,10 +277,25 @@ function M.IsBoundTooltip(lines)
     return false
 end
 
+-- How old the price is, always (the user, 2026-11-10: "we need to have a refreshed time on these
+-- tooltips for selling"); orange past 6 hours: it may have changed since
+local STALE = 6 * 3600
 local function AgeText(sec)
-    if not sec or sec < 3600 then return "" end
-    if sec < 86400 then return (" |cff888888(%dh old)|r"):format(math.floor(sec / 3600)) end
-    return (" |cff888888(%dd old)|r"):format(math.floor(sec / 86400))
+    if not sec then return "" end
+    local t
+    if sec < 120 then t = "just now"
+    elseif sec < 3600 then t = ("%dm ago"):format(math.floor(sec / 60))
+    elseif sec < 86400 then
+        local h, m = math.floor(sec / 3600), math.floor((sec % 3600) / 60)
+        t = m > 0 and ("%dh %dm ago"):format(h, m) or ("%dh ago"):format(h)
+    else t = ("%dd ago"):format(math.floor(sec / 86400)) end
+    return (sec >= STALE and " |cffff9933· %s|r" or " |cff888888· %s|r"):format(t)
+end
+
+-- "· 1 listed" / "· 12 listed": how deep the market was at that scan (unknown after a browse search)
+local function ListedText(q)
+    if type(q) ~= "number" or q <= 0 then return "" end
+    return (q == 1 and " |cffff9933· 1 listed|r" or " |cff888888· %d listed|r"):format(q)
 end
 
 local function OnItemTooltip(tt, data)
@@ -298,8 +313,35 @@ local function OnItemTooltip(tt, data)
     local rate, learned = M.CutRate()
     local net = p - M.CutOf(p, rate)
     local vendor = VendorEach(data.hyperlink or itemID)
-    tt:AddLine(("|cff00c7ffVoidAH|r  AH %s each%s, you get %s after %s cut"):format(
-        Money(p), AgeText(ah.GetPriceAge and ah:GetPriceAge(itemID)), Money(net), PctText(rate, learned)), 0.85, 0.85, 0.85)
+    local age = ah.GetPriceAge and ah:GetPriceAge(itemID)
+    local listed = ah.GetListed and ah:GetListed(itemID)
+    tt:AddLine(("|cff00c7ffVoidAH|r  AH %s each%s%s, you get %s after %s cut"):format(
+        Money(p), ListedText(listed), AgeText(age), Money(net), PctText(rate, learned)), 0.85, 0.85, 0.85)
+    -- a profit resting on one listing or an old price: say so where you'd act on it
+    local shaky = (age and age >= STALE) or listed == 1
+    -- On a merchant's page the question is buy here and resell, not list-or-vendor (the user, 2026-11-10,
+    -- Grom'gol: "Worth listing: +39s over vendor (1s 50c)" on a recipe the merchant SELLS: 1s 50c is
+    -- what a vendor pays you, not this merchant's price). Gold prices only; the AH deposit is not counted.
+    local owner = tt.GetOwner and tt:GetOwner()
+    local oname = owner and owner.GetName and owner:GetName()
+    if MerchantFrame and MerchantFrame:IsShown() and MerchantFrame.selectedTab == 1 and type(oname) == "string"
+        and oname:match("^MerchantItem%d+ItemButton$") and C_MerchantFrame and C_MerchantFrame.GetItemInfo then
+        local ok, info = pcall(C_MerchantFrame.GetItemInfo, owner:GetID())
+        local price = ok and info and info.price
+        if type(price) == "number" and not (issecretvalue and issecretvalue(price)) and price > 0 and not info.hasExtendedCost then
+            local each = price / math.max(1, info.stackCount or 1)
+            local stock = (info.numAvailable or -1) >= 0 and (" |cff888888(%d in stock)|r"):format(info.numAvailable) or ""
+            if net > each then
+                tt:AddLine(("  Buy here %s, resell on the AH: |cff3ddc84+%s profit each|r%s"):format(Money(each), Money(net - each), stock), 0.85, 0.85, 0.85)
+                if shaky then tt:AddLine("  Check the AH before buying: one listing or an old price.", 1, 0.6, 0.2) end
+            else
+                tt:AddLine(("  Buy here %s: the AH pays %s after the cut, no profit"):format(Money(each), Money(net)), 1, 0.42, 0.42)
+            end
+        end
+        -- on a merchant's page, never the list-or-vendor advice: an item bought with tokens / other
+        -- currency (no gold price to compare) just keeps the AH line (Sol review)
+        return
+    end
     if vendor > 0 then
         if net > vendor then
             tt:AddLine(("  Worth listing: +%s each over vendor (%s)"):format(Money(net - vendor), Money(vendor)), 0.24, 0.86, 0.52)

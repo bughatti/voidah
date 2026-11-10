@@ -126,7 +126,8 @@ function AH:SetPrice(itemID, minBuyout, qty, auctions, name)
     entry.t = time()
     -- a quantity without an auction count (a browse search) clears the old count: "2 in 50"
     -- would mix two different scans (Sol review)
-    if qty then entry.q, entry.n = qty, auctions end
+    -- qt: the scan the count is from; a price-only update drops it (two updates can share a second, Sol)
+    if qty then entry.q, entry.n, entry.qt = qty, auctions, entry.t else entry.qt = nil end
     if type(name) == "string" and name ~= "" then entry.nm = name end
 
     -- Update history
@@ -145,6 +146,14 @@ end
 -- Every item this realm's scans have seen: { ["itemID"] = { m, t, h, q, n, nm }, ... } (read-only use)
 function AH:AllPrices()
     return GetRealmDB()
+end
+
+-- how many were listed at the scan that set the price (nil after a browse search, which has no count)
+function AH:GetListed(itemID)
+    local entry = GetRealmDB()[tostring(itemID)]
+    -- only when the count is from the same scan as the price (a later price-only update keeps an old count)
+    if entry and entry.q and entry.qt and entry.qt == entry.t then return entry.q end
+    return nil
 end
 
 function AH:GetPriceAge(itemID)
