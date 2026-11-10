@@ -59,6 +59,8 @@ A type picker at the top left switches between kinds of deals:
 - The steps with skill ranges and craft counts, and the full material list with prices
 - **Buy** jumps to Browse with the item selected and shows a banner that tracks your progress (e.g. "47 / 200 in bags")
 - **+ List** adds the material to your shopping list on the Scan tab
+- **WoW Forever:** plans with Forever's own recipes for every profession (First Aid included), to your rank cap. Materials a vendor sells show the nearest vendor with a **Go** button that shows the way (with **VoidGPS**), and **Vendor stops to errands** puts them on VoidGPS's errands list so you don't need to come back here
+- **What selling your crafts brings back** comes off the cost (vendor, or the Auction House after its cut for up to 20 of each)
 
 ### VoidGear suggestions (optional)
 - With **VoidGear** installed, the shopping list on the Scan tab gets a **"VoidGear suggestions"** section: the enchants, gems and consumables VoidGear's Prep tab says you need, each with a price and a Buy button

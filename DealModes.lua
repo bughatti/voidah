@@ -540,7 +540,7 @@ end
 
 local function enchantingSkill()
     if not (GetProfessions and GetProfessionInfo) then return nil end
-    for _, idx in ipairs({ GetProfessions() }) do
+    for _, idx in pairs({ GetProfessions() }) do   -- pairs: the list has nil gaps
         local name, _, rank, _, _, _, line = GetProfessionInfo(idx)
         if line == 333 or name == "Enchanting" then return rank or 0 end
     end

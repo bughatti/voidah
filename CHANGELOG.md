@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.9.0] — 2026-11-10
+
+### Added (WoW Forever)
+- **Professions tab plans with Forever's own recipes** for every profession, First Aid included (it was missing), from VoidProf. Vendor-sold materials show the nearest vendor that sells them for gold, with a **Go** button that shows the way (VoidGPS). **Vendor stops to errands** puts them on VoidGPS's errands list so you don't have to come back to the Auction House.
+- **Your materials stay off the sell list:** a material a Forever recipe of one of your professions uses (Tigerseye for a blacksmith, vials and thread for First Aid) is never vendor trash.
+
+### Fixed (WoW Forever)
+- **Browse at level 60:** the "current expansion only" filter could hide every item (Forever items are all Classic). It's off and hidden there.
+- **Upgrade arrows on Classic gear** no longer come out grey ("unknown"): Midnight's stat priorities don't load on Forever.
+
 ## [1.8.1] — 2026-11-09
 
 ### Fixed

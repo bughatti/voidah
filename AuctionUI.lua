@@ -293,7 +293,12 @@ local PROF_REAGENT_MAP = {
     ["Engineering"]    = { "Parts", "Metal & Stone", "Engineering", "Optional Reagents", "Finishing Reagents" },
     ["Cooking"]        = { "Cooking", "Meat", "Fish" },
     ["Fishing"]        = { "Fish" },
+    ["First Aid"]      = { "Cloth" },   -- WoW Forever: bandages are cloth
 }
+
+-- WoW Forever: material -> professions with a Forever recipe that uses it (ForeverReagents.lua,
+-- generated; nil on retail). This addon's own copy: VoidAH never reads VoidBags' tables.
+local FOREVER_REAGENTS = select(2, ...).FOREVER_REAGENTS
 
 local REAGENT_TO_PROF = {}
 for prof, subs in pairs(PROF_REAGENT_MAP) do
@@ -312,9 +317,9 @@ local function GetPlayerProfs()
         return _playerProfCache
     end
     local profs = {}
-    local p1, p2, _, fishing, cooking = GetProfessions()
-    local list = { p1, p2, fishing, cooking }
-    for i = 1, 4 do   -- not ipairs: missing professions are nil holes
+    -- all of them: on WoW Forever First Aid comes after cooking (2026-11-09)
+    local list = { GetProfessions() }
+    for i = 1, 8 do   -- not ipairs: missing professions are nil holes
         local profID = list[i]
         if profID then
             local ok, name = pcall(GetProfessionInfo, profID)
@@ -1009,6 +1014,9 @@ local function IsLeveling()
 end
 
 local function CurrentExpansionOnly()
+    -- WoW Forever: every item is Classic (expansion 0), so at the level-60 cap this would hide
+    -- everything; it means nothing there (Forever audit, 2026-11-09)
+    if (select(4, GetBuildInfo()) or 0) < 100000 then return false end
     if IsLeveling() then return false end
     return not (VoidUIAuctionDB and VoidUIAuctionDB.currentExpansionOnly == false)
 end
@@ -2073,14 +2081,16 @@ function BuildBrowseTab(parent)
             Flag("Usable only", "usableOnly", false, "Items your character can use now: class, armor/weapon type and level.")
             Flag("Upgrades only", "upgradesOnly", true, "Blizzard's own upgrade check against what you're wearing.")
             Flag("Uncollected only", "uncollectedOnly", true, "Appearances, pets, mounts and toys you don't have yet.")
-            local exp = root:CreateCheckbox(CurrentExpansionName() .. " only",
-                function() return CurrentExpansionOnly() end,
-                function()
-                    local db = AuctionDB()
-                    db.currentExpansionOnly = not CurrentExpansionOnly()
-                    FilterLabel(); Rerun(false)
-                end)
-            if IsLeveling() then exp:SetEnabled(false) end   -- off while leveling (see CurrentExpansionOnly)
+            if not IS_FOREVER then   -- no expansions on WoW Forever (see CurrentExpansionOnly)
+                local exp = root:CreateCheckbox(CurrentExpansionName() .. " only",
+                    function() return CurrentExpansionOnly() end,
+                    function()
+                        local db = AuctionDB()
+                        db.currentExpansionOnly = not CurrentExpansionOnly()
+                        FilterLabel(); Rerun(false)
+                    end)
+                if IsLeveling() then exp:SetEnabled(false) end   -- off while leveling (see CurrentExpansionOnly)
+            end
 
             root:CreateDivider()
             root:CreateTitle("Quality")
@@ -2593,6 +2603,14 @@ BuildSellableBagItems = function()
                                     break
                                 end
                             end
+                        end
+                    end
+                    -- WoW Forever: a Forever recipe of one of your professions uses it (Tigerseye
+                    -- for a blacksmith; the subclass map says Jewelcrafting only). Audit 2026-11-09.
+                    local fUsers = FOREVER_REAGENTS and FOREVER_REAGENTS[info.itemID]
+                    if fUsers and not playerUses then
+                        for prof in pairs(fUsers) do
+                            if profs[prof] then playerUses = true; break end
                         end
                     end
                     if not playerUses then
@@ -5280,9 +5298,10 @@ function BuildProfessionsTab(parent)
     local function GetActiveProfessionInfo()
         local info = {}
         if not GetProfessions then return info end
-        local prof1, prof2, archaeology, fishing, cooking = GetProfessions()
-        local list = { prof1, prof2, archaeology, fishing, cooking }
-        for i = 1, 5 do   -- not ipairs: missing professions are nil holes
+        -- prof1, prof2, archaeology, fishing, cooking, and on WoW Forever First Aid after them
+        -- (the user's First Aid was missing from this tab, 2026-11-09)
+        local list = { GetProfessions() }
+        for i = 1, 8 do   -- not ipairs: missing professions are nil holes
             local idx = list[i]
             if idx then
                 local name, _, rank, maxRank = GetProfessionInfo(idx)
@@ -5398,6 +5417,12 @@ function BuildProfessionsTab(parent)
     searchAllBtn:Disable()
     searchAllBtn:SetAlpha(0.5)
 
+    -- vendor goods go on VoidGPS's errands list (a box out in the world, a "Buy here" button at
+    -- the vendor), so you needn't come back to the AH to remember them (the user, 2026-11-09)
+    local errandsBtn = CreateButton(rightPane, 170, 26, "|cff66ccffVendor stops to errands|r", nil)
+    errandsBtn:SetPoint("LEFT", searchAllBtn, "RIGHT", 8, 0)
+    errandsBtn:Hide()
+
     local function RenderMatRows(plan)
         for _, row in ipairs(parent._matRows) do row:Hide() end
         if not plan then
@@ -5405,6 +5430,7 @@ function BuildProfessionsTab(parent)
             planNotes:SetText("")
             addAllBtn:Disable(); addAllBtn:SetAlpha(0.5)
             searchAllBtn:Disable(); searchAllBtn:SetAlpha(0.5)
+            errandsBtn:Hide()
             return
         end
 
@@ -5547,6 +5573,24 @@ function BuildProfessionsTab(parent)
                 addBtn:SetPoint("RIGHT", -8, 0)
                 row._addBtn = addBtn
 
+                -- vendor goods: the name is a link that shows the way (VoidGPS)
+                local nameBtn = CreateFrame("Button", nil, row)
+                nameBtn:SetPoint("TOPLEFT", nameLbl, "TOPLEFT", 0, 2)
+                nameBtn:SetPoint("BOTTOMRIGHT", nameLbl, "BOTTOMRIGHT", 0, -2)
+                local nhl = nameBtn:CreateTexture(nil, "HIGHLIGHT")
+                nhl:SetAllPoints()
+                nhl:SetColorTexture(0, 0.78, 1, 0.12)
+                nameBtn:SetScript("OnEnter", function(self)
+                    if not self.vendor then return end
+                    GameTooltip:SetOwner(self, "ANCHOR_TOP")
+                    GameTooltip:AddLine(self.vendor.name, 1, 0.82, 0)
+                    if self.vendor.zone then GameTooltip:AddLine(self.vendor.zone, 1, 1, 1) end
+                    GameTooltip:AddLine("Sold by a vendor: cheaper than the Auction House. Click to show the way.", 0.6, 0.6, 0.6, true)
+                    GameTooltip:Show()
+                end)
+                nameBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+                row._nameBtn = nameBtn
+
                 parent._matRows[i] = row
             end
 
@@ -5556,12 +5600,33 @@ function BuildProfessionsTab(parent)
             local c = (i % 2 == 0) and 0.07 or 0.04
             row._bg:SetColorTexture(c, c, c, 0.7)
             row._qtyLbl:SetText(mat[1] .. "x")
-            row._nameLbl:SetText(mat[2] .. (mat[4] and ("  |cff888888" .. mat[4] .. "|r") or ""))
+            local vendor = mat[5]   -- VoidProf: a vendor sells it for gold, cheaper than the AH
+            -- vendor rows have no "+ List": Go moves to the far right and the name gets the room
+            -- (names were cut to "Xe...", 2026-11-09)
+            row._searchBtn:ClearAllPoints()
+            row._searchBtn:SetPoint("RIGHT", vendor and -8 or -82, 0)
+            row._nameLbl:SetPoint("RIGHT", vendor and -86 or -160, 0)
+            local priceText = mat[4] and vendor and mat[4]:gsub(" vendor each", " each") or mat[4]
+            row._nameLbl:SetText(mat[2] .. (priceText and ("  |cff888888" .. priceText .. "|r") or "")
+                .. (vendor and ("  |cff66ccff" .. vendor.name .. (vendor.zone and (" (" .. vendor.zone .. ")") or "") .. "|r") or ""))
 
             local itemName = mat[2]
             local itemID   = mat[3]  -- optional — preferred for shopping list resolution
             local qtyNeeded = mat[1]
+            local function showWay()
+                local G = VoidGPS and VoidGPS.Goods
+                if not (G and itemID and G:Go(itemID)) then
+                    print("|cff00c7ffVoidAH|r: " .. itemName .. " is sold by " .. vendor.name
+                        .. (vendor.zone and (" in " .. vendor.zone) or "") .. ".")
+                end
+            end
+            row._nameBtn.vendor = vendor
+            row._nameBtn:SetShown(vendor ~= nil)
+            row._nameBtn:SetScript("OnClick", vendor and showWay or nil)
+            row._addBtn:SetShown(vendor == nil)   -- nothing to list on the AH for a vendor good
+            row._searchBtn._text:SetText(vendor and "|cff66ccffGo|r" or "|cff00ff00Buy|r")
             row._searchBtn:SetScript("OnClick", function()
+                if vendor then showWay() return end
                 if not AH or not AH.ahOpen then
                     print("|cff00c7ffVoidAH|r: Open the Auction House first.")
                     return
@@ -5595,13 +5660,27 @@ function BuildProfessionsTab(parent)
 
         addAllBtn:Enable(); addAllBtn:SetAlpha(1)
         searchAllBtn:Enable(); searchAllBtn:SetAlpha(1)
+        local errands = VoidGPS and VoidGPS.Errands
+        local nVendor = 0
+        for _, mat in ipairs(plan.mats) do if mat[5] then nVendor = nVendor + 1 end end
+        errandsBtn:SetShown(errands ~= nil and nVendor > 0)
+        errandsBtn:SetScript("OnClick", function()
+            if not errands then return end
+            local n = 0
+            for _, mat in ipairs(plan.mats) do
+                if mat[5] and mat[3] and errands:Add(mat[3], mat[1], plan.skill) then n = n + 1 end
+            end
+            print(("|cff00c7ffVoidAH|r: %d vendor item(s) for %s are on your errands list (VoidGPS)."):format(n, plan.skill or "the plan"))
+        end)
         addAllBtn:SetScript("OnClick", function()
             if not ResolveAndAddItem then return end
             local count = 0
             for _, mat in ipairs(plan.mats) do
-                local resolveKey = mat[3] and tostring(mat[3]) or mat[2]
-                ResolveAndAddItem(resolveKey, 0, tabFrames and tabFrames[5])
-                count = count + 1
+                if not mat[5] then   -- vendor goods are bought at the vendor
+                    local resolveKey = mat[3] and tostring(mat[3]) or mat[2]
+                    ResolveAndAddItem(resolveKey, 0, tabFrames and tabFrames[5])
+                    count = count + 1
+                end
             end
             print(string.format("|cff00c7ffVoidAH|r: Added %d items from %s to your Shopping List.", count, plan.name))
         end)
@@ -5610,7 +5689,10 @@ function BuildProfessionsTab(parent)
                 print("|cff00c7ffVoidAH|r: Open the Auction House first.")
                 return
             end
-            local first = plan.mats[1]
+            local first
+            for _, mat in ipairs(plan.mats) do
+                if not mat[5] then first = mat; break end   -- skip vendor goods
+            end
             if not first then return end
             if SetActiveTab then SetActiveTab(1) end
             if tabFrames and tabFrames[1] and tabFrames[1]._searchBox then
