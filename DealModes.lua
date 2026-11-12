@@ -117,7 +117,7 @@ local function makeList(parent, top, cols, paintRow, onClick)
             -- scrolled under the mouse: the tooltip follows the row's new item
             if GameTooltip:IsOwned(row) then
                 if d and d.item then
-                    GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
+                    if VoidUI.AH.ListTooltip then VoidUI.AH.ListTooltip(row) else GameTooltip:SetOwner(row, "ANCHOR_RIGHT") end
                     GameTooltip:SetItemByID(d.item)
                     GameTooltip:Show()
                 else
@@ -154,7 +154,7 @@ local function makeList(parent, top, cols, paintRow, onClick)
         row:SetScript("OnEnter", function(self)
             bg:SetColorTexture(0.20, 0.20, 0.28, 1)
             if not (self._d and self._d.item) then return end
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            if VoidUI.AH.ListTooltip then VoidUI.AH.ListTooltip(self) else GameTooltip:SetOwner(self, "ANCHOR_RIGHT") end
             GameTooltip:SetItemByID(self._d.item)
             GameTooltip:Show()
         end)

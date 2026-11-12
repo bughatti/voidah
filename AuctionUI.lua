@@ -6,15 +6,16 @@
 -- piece to the pixel grid, and a thin line on a fractional position can snap to 0 px: a side
 -- of a box vanishes. VoidPX() asks for one real pixel, and the hook below (installed once, by
 -- the first Void addon loaded) turns snapping off on the edges of flat WHITE8X8 borders, like
--- Blizzard's NineSliceUtil.DisableSharpening, so a 1 px line always covers a pixel.
-local _, ns = ...   -- ns.Move (VoidMove.lua)
+-- Blizzard's NineSliceUtil.DisableSharpening, so a 1 px line always covers a pixel. It also
+-- moves the border 1/8 px up-left: a side sitting exactly on a pixel's middle (a box centred
+-- in an odd-width window) covered no pixel and vanished (2026-11-12).
 local function VoidPX()
     local s = UIParent and UIParent:GetEffectiveScale()
     if s and s > 0 and PixelUtil and PixelUtil.GetPixelToUIUnitFactor then return PixelUtil.GetPixelToUIUnitFactor() / s end
     return 1
 end
-if not _G.__VoidBorderHook and hooksecurefunc and NineSliceUtil and NineSliceUtil.ApplyLayout then
-    _G.__VoidBorderHook = true
+if not _G.__VoidBorderHook2 and hooksecurefunc and NineSliceUtil and NineSliceUtil.ApplyLayout then
+    _G.__VoidBorderHook2 = true
     local EDGES = { "TopEdge", "BottomEdge", "LeftEdge", "RightEdge",
                     "TopLeftCorner", "TopRightCorner", "BottomLeftCorner", "BottomRightCorner" }
     hooksecurefunc(NineSliceUtil, "ApplyLayout", function(c)
@@ -28,8 +29,23 @@ if not _G.__VoidBorderHook and hooksecurefunc and NineSliceUtil and NineSliceUti
                 t:SetTexelSnappingBias(0)
             end
         end
+        -- the corners hold the box's own points; the edges and the background hang off them
+        local sc = c.GetEffectiveScale and c:GetEffectiveScale()
+        if not (sc and sc > 0 and PixelUtil and PixelUtil.GetPixelToUIUnitFactor) then return end
+        local d = PixelUtil.GetPixelToUIUnitFactor() / sc / 8
+        for n = 5, 8 do
+            local t = c[EDGES[n]]
+            if t and t.GetNumPoints and t:GetNumPoints() == 1 then
+                local p, rel, rp, x, y = t:GetPoint(1)
+                if rel == c then
+                    t:ClearAllPoints()
+                    t:SetPoint(p, c, rp, (x or 0) - d, (y or 0) + d)
+                end
+            end
+        end
     end)
 end
+local _, ns = ...   -- ns.Move (VoidMove.lua)
 local AH = VoidUI.AH
 
 -- WoW Forever's client drops the old global item functions (retail still
@@ -658,6 +674,114 @@ end
 ----------------------------------------------------------------------
 -- Build: Row template for item lists
 ----------------------------------------------------------------------
+-- List rows: the item tooltip goes BESIDE the Auction House window, never over the list, and
+-- the "Equipped" comparisons stack under it in the same column (the user, 2026-11-12: "see
+-- how the tooltips are covering what im trying to look at"). Anchored to the row, the game
+-- put the comparisons on the side with more room: back over the list. Left of the window
+-- when there's room there, else right.
+local LIST_TIP_W = 330
+local function listTipSide()
+    local p = _G.VoidUI_AuctionPanel
+    local l, r = p and p:IsShown() and p:GetLeft(), p and p:GetRight()
+    if not (l and r) then return nil end
+    local roomRight = (GetScreenWidth() or 0) - r
+    if l >= LIST_TIP_W or l >= roomRight then return "left", p end
+    return "right", p
+end
+-- raise: how far up (in the tooltip's units) the column starts above the window's top, so a
+-- tall stack still fits on the screen
+local function placeListTip(side, p, raise)
+    local tip = GameTooltip
+    raise = raise or 0
+    local pt, rel, rp = "TOPRIGHT", "TOPLEFT", -4
+    if side == "right" then pt, rel, rp = "TOPLEFT", "TOPRIGHT", 4 end
+    local a, r, b, x, y = tip:GetPoint(1)
+    if tip:GetNumPoints() == 1 and a == pt and r == p and b == rel and x == rp and y and math.abs(y - raise) < 0.5 then
+        return
+    end
+    tip:ClearAllPoints()
+    tip:SetPoint(pt, p, rel, rp, raise)
+end
+function AH.ListTooltip(row)
+    local side, p = listTipSide()
+    if not side then GameTooltip:SetOwner(row, "ANCHOR_RIGHT") return end
+    row._vahListTip = true
+    GameTooltip:SetOwner(row, "ANCHOR_NONE")
+    placeListTip(side, p)
+end
+-- The game places the comparison tooltips itself after every refresh: put them back under
+-- ours. Retail does it in Lua (TooltipComparisonManager, hooked); WoW Forever doesn't load
+-- that file and places them from the client (C_TooltipComparison.CompareItem), so a check on
+-- the tooltip's OnUpdate moves them there (only while one of our list rows owns the tooltip).
+local function stackComparisons()
+    local tip = GameTooltip
+    local owner = tip:IsShown() and tip:GetOwner()
+    if not (owner and owner._vahListTip) then return end
+    local side, p = listTipSide()
+    if not side then return end
+    local pt, rp = "TOPRIGHT", "BOTTOMRIGHT"
+    if side == "right" then pt, rp = "TOPLEFT", "BOTTOMLEFT" end
+    -- 20: room for the "Equipped" tab the game draws above each comparison (at 2 it covered
+    -- the last line of the tooltip above)
+    local GAP = 20
+    local list = tip.shoppingTooltips or { _G.ShoppingTooltip1, _G.ShoppingTooltip2 }
+    local shown = {}
+    for i = 1, 2 do
+        local t = list[i]
+        if t and t:IsShown() then shown[#shown + 1] = t end
+    end
+    -- the whole column must fit between the window's top and the screen's bottom: the game
+    -- clamps each tooltip on its own, which would push them over each other (Sol review)
+    -- every height and offset in the item tooltip's units (s); a comparison scaled differently
+    -- gets its offset converted to its own units (Sol review)
+    local s, ps = tip:GetEffectiveScale(), p:GetEffectiveScale()
+    local function h(t) return (t:GetHeight() or 0) * t:GetEffectiveScale() / s end
+    local total = tip:GetHeight() or 0
+    for _, t in ipairs(shown) do total = total + GAP + h(t) end
+    local room = (p:GetTop() or 0) * ps / s                  -- window top to screen bottom
+    local headroom = (UIParent:GetTop() or 0) * UIParent:GetEffectiveScale() / s - room
+    -- taller than the whole screen: the comparisons go in a second column beside the item
+    -- tooltip (away from the window) instead of under it
+    local beside = total > room + headroom
+    local raise = beside and math.max(0, headroom) or math.max(0, math.min(total - room, headroom))
+    placeListTip(side, p, raise)
+    -- every comparison hangs off the item tooltip itself, never off the other comparison:
+    -- retail's own layout anchors the first to the second, and a chain back would make a
+    -- loop ("dependent region" error; Sol review)
+    local cpt, crp, cx = pt, rp, 0
+    if beside then
+        if side == "left" then cpt, crp, cx = "TOPRIGHT", "TOPLEFT", -4
+        else cpt, crp, cx = "TOPLEFT", "TOPRIGHT", 4 end
+    end
+    local down = GAP
+    for _, t in ipairs(shown) do
+        local k = s / t:GetEffectiveScale()                  -- tooltip units -> this one's units
+        local wantX, wantY = cx * k, -down * k
+        local a, rel, b, x, y = t:GetPoint(1)
+        if t:GetNumPoints() ~= 1 or a ~= cpt or rel ~= tip or b ~= crp or not (x and y)
+            or math.abs(x - wantX) >= 0.5 or math.abs(y - wantY) >= 0.5 then
+            t:ClearAllPoints()
+            t:SetPoint(cpt, tip, crp, wantX, wantY)
+        end
+        down = down + h(t) + GAP
+    end
+end
+if not AH._listTipHook then
+    AH._listTipHook = true
+    if TooltipComparisonManager and TooltipComparisonManager.AnchorShoppingTooltips then
+        hooksecurefunc(TooltipComparisonManager, "AnchorShoppingTooltips", function(self)
+            if self.tooltip ~= GameTooltip then return end
+            local owner = GameTooltip:GetOwner()
+            if not (owner and owner._vahListTip) then return end
+            stackComparisons()   -- also puts the tooltip back if the game slid it sideways
+        end)
+    end
+    GameTooltip:HookScript("OnUpdate", stackComparisons)
+    for _, n in ipairs({ "ShoppingTooltip1", "ShoppingTooltip2" }) do
+        if _G[n] then _G[n]:HookScript("OnShow", stackComparisons) end
+    end
+end
+
 local function CreateItemRow(parent, index)
     local row = CreateFrame("Button", nil, parent)
 
@@ -676,7 +800,7 @@ local function CreateItemRow(parent, index)
     row:SetScript("OnEnter", function(self)
         bg:SetColorTexture(0.20, 0.20, 0.28, 1)
         if self._itemID then
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            AH.ListTooltip(self)
             -- Use SetItemKey for AH items so tooltip shows scaled ilvl/stats
             if self._itemKey and self._itemKey.itemLevel and self._itemKey.itemLevel > 0 then
                 GameTooltip:SetItemKey(self._itemKey.itemID, self._itemKey.itemLevel, self._itemKey.itemSuffix or 0)
@@ -2736,7 +2860,7 @@ local function CreateSellItemRow(parent, index)
         if self._isDivider then return end  -- no hover effect on section headers
         bg:SetColorTexture(0.20, 0.20, 0.28, 1)
         if self._bagID and self._slotID then
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            AH.ListTooltip(self)
             GameTooltip:SetBagItem(self._bagID, self._slotID)
             GameTooltip:Show()
         end

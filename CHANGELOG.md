@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.10.2] — 2026-11-12
+
+- **Item tooltips no longer cover the list.** Hovering a row in Browse, Sell or Deals opens the item tooltip beside the Auction House window (left of it when there is room), with the "Equipped" comparisons stacked under it.
+- **Fixed: a side of a box could be missing**, e.g. the right line of the recipes box and its buttons when the game window is an odd number of pixels wide. Every Void box now always shows all four border lines.
+
 ## [1.10.1] — 2026-11-12
 
 - **The Auction House window and the Auction House anywhere window can be dragged** (by the title bar) and stay where you put them, even after a restart.
