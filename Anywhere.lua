@@ -10,6 +10,7 @@
 -- VoidAH's shopping list, which is checked by itself the next time you open the AH.
 -- Open: /vah away from an Auctioneer, or the VoidAH icon on the Void hub.
 ----------------------------------------------------------------------
+local _, ns = ...   -- ns.Move (VoidMove.lua)
 VoidUI = VoidUI or {}
 local W = {}
 VoidUI.AHAnywhere = W
@@ -178,6 +179,7 @@ local function create()
     frame:RegisterForDrag("LeftButton")
     frame:SetScript("OnDragStart", frame.StartMoving)
     frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
+    ns.Move(frame, { db = function() return VoidUIAuctionDB end, key = "anywhere" })   -- drag + kept after a restart (VoidMove.lua)
     if VoidUI.CreateBackdrop then VoidUI:CreateBackdrop(frame, "transparent") end
     frame:SetBackdropColor(0.04, 0.04, 0.06, 0.96)
     tinsert(UISpecialFrames, "VoidAHAnywhereFrame")   -- Esc closes it

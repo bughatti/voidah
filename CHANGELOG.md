@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.10.1] — 2026-11-12
+
+- **The Auction House window and the Auction House anywhere window can be dragged** (by the title bar) and stay where you put them, even after a restart.
+- **Void hub button:** left-click opens one panel with all your Void addons by name, grouped, each with its own on/off switches (it replaces the ring of icons), with a background slider. The hub's info window now stays where you put it.
+
 ## [1.10.0] — 2026-11-10
 
 ### Added (WoW Forever)
