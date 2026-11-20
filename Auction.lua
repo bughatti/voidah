@@ -81,11 +81,69 @@ end
 ----------------------------------------------------------------------
 -- Database helpers
 ----------------------------------------------------------------------
-local function GetRealmDB()
+-- WoW Forever has THREE auction houses per realm, each its own market: your faction's, the other faction's, and the
+-- neutral one (Booty Bay, Gadgetzan and Everlook share one, both factions trade there, and its cut is ~15%). The
+-- user, 2026-11-20: "the bootybay ah is a shared one and prices are different so really we should have 3 pricings".
+-- So prices are kept per house: the one you have open, else your faction's (tooltips, VoidProf plans, deals away
+-- from an auction house). Retail keeps one pool per realm.
+local IS_FOREVER = (select(4, GetBuildInfo()) or 0) < 100000
+local NEUTRAL_ZONES = { [1434] = true, [1446] = true, [1452] = true }   -- Stranglethorn Vale, Tanaris, Winterspring
+AH.openHouse = nil   -- "Neutral" / "Horde" / "Alliance" while an auction house is open (Forever)
+
+-- the zone you're in (a city or sub-map walks up to its zone)
+local function ZoneMap()
+    local m = C_Map and C_Map.GetBestMapForUnit and C_Map.GetBestMapForUnit("player")
+    for _ = 1, 6 do
+        if not m or NEUTRAL_ZONES[m] then return m end
+        local info = C_Map.GetMapInfo(m)
+        if not info or (info.mapType or 9) <= 3 then return m end   -- 3 = Zone
+        m = info.parentMapID
+    end
+    return m
+end
+
+-- the auction house in front of you: the neutral one in those three zones (none of them has a faction house)
+function AH:HouseHere()
+    local faction = UnitFactionGroup("player") or "Horde"
+    if IS_FOREVER and NEUTRAL_ZONES[ZoneMap() or 0] then return "Neutral" end
+    return faction
+end
+
+-- the house prices are read and written for: the open one, else your faction's
+function AH:House()
+    return self.openHouse or (UnitFactionGroup("player") or "Horde")
+end
+function AH:HouseName(house)
+    house = house or self:House()
+    return house == "Neutral" and "Booty Bay / Gadgetzan / Everlook" or (house .. " auction house")
+end
+
+-- The one-pool data from before stays where it was: it belongs to the faction that has been using it (a Forever
+-- PvP realm allows one faction per account), so the first faction house used here keeps the plain realm key.
+local function HouseKey(house)
     local realm = GetRealmName()
+    if not IS_FOREVER then return realm end
+    house = house or AH:House()
+    VoidUIAuctionDB._base = VoidUIAuctionDB._base or {}
+    local base = VoidUIAuctionDB._base[realm]
+    -- only YOUR faction claims the old pool: a lookup by name for the other faction must not take it (Sol)
+    if not base and house ~= "Neutral" and house == UnitFactionGroup("player") then
+        base = house
+        VoidUIAuctionDB._base[realm] = base
+    end
+    if house == base then return realm end
+    return realm .. " [" .. house .. "]"
+end
+AH.HouseKey = function(_, house)
     if not VoidUIAuctionDB then VoidUIAuctionDB = {} end
-    if not VoidUIAuctionDB[realm] then VoidUIAuctionDB[realm] = {} end
-    return VoidUIAuctionDB[realm]
+    return HouseKey(house)
+end
+
+local function GetRealmDB(house)
+    if not VoidUIAuctionDB then VoidUIAuctionDB = {} end
+    local key = HouseKey(house)
+    if not VoidUIAuctionDB[key] then VoidUIAuctionDB[key] = {} end
+    return VoidUIAuctionDB[key]
 end
 
 local function DayIndex()
@@ -105,8 +163,9 @@ end
 ----------------------------------------------------------------------
 -- Price DB API
 ----------------------------------------------------------------------
-function AH:GetPrice(itemID)
-    local db = GetRealmDB()
+-- house (optional): another house's price ("Neutral" / "Horde" / "Alliance"); default = the current house
+function AH:GetPrice(itemID, house)
+    local db = GetRealmDB(house)
     local entry = db[tostring(itemID)]
     if entry then return entry.m end
     return nil
@@ -208,9 +267,21 @@ function AH:GetDBStats()
     return count
 end
 
+-- when THIS house's prices were last fully scanned (Forever: per house; before houses there was one time, which
+-- belongs to the plain realm key)
 function AH:GetLastFullScan()
     if not VoidUIAuctionDB then return 0 end
-    return VoidUIAuctionDB._lastFullScan or 0
+    local key = HouseKey()
+    local by = VoidUIAuctionDB._lastScanBy
+    -- once per-house times exist, a house without one was never fully scanned (Sol: falling back to the one
+    -- global time let another realm's or house's scan make it look fresh)
+    if by then return by[key] or 0 end
+    if key == GetRealmName() then return VoidUIAuctionDB._lastFullScan or 0 end
+    return 0
+end
+-- the server's limit on full scans is one timer for the whole client, whatever house
+local function LastFullScanAny()
+    return VoidUIAuctionDB and VoidUIAuctionDB._lastFullScan or 0
 end
 
 function AH:GetLastBrowseScan()
@@ -228,12 +299,12 @@ local function LastReplicateRequest()
 end
 
 function AH:CanFullScan()
-    local since = time() - math.max(self:GetLastFullScan(), LastReplicateRequest())
+    local since = time() - math.max(LastFullScanAny(), LastReplicateRequest())
     return since >= FULL_SCAN_COOLDOWN
 end
 
 function AH:FullScanCooldownLeft()
-    local elapsed = time() - math.max(self:GetLastFullScan(), LastReplicateRequest())
+    local elapsed = time() - math.max(LastFullScanAny(), LastReplicateRequest())
     return math.max(0, FULL_SCAN_COOLDOWN - elapsed)
 end
 
@@ -441,8 +512,16 @@ function AH:_FinishFullScan()
     -- so THROTTLED_SYSTEM_READY may never fire — unstick the queue
     throttleReady = true
     if not VoidUIAuctionDB then VoidUIAuctionDB = {} end
+    if not VoidUIAuctionDB._lastScanBy then
+        -- first per-house scan: the one old time belongs to the plain pool, before it's overwritten below
+        -- (else a Booty Bay scan made the faction house look freshly scanned; voidah-house-test)
+        -- (0 = never: nil would fall back to the global time set just below, Sol)
+        VoidUIAuctionDB._lastScanBy = { [GetRealmName()] = VoidUIAuctionDB._lastFullScan or 0 }
+    end
     VoidUIAuctionDB._lastFullScan = time()
-    print("|cff00ffffVoidAH|r: Full scan complete. " .. self.scanProcessed .. " listings processed, " .. self:GetDBStats() .. " items in DB.")
+    VoidUIAuctionDB._lastScanBy[HouseKey()] = time()
+    print("|cff00ffffVoidAH|r: Full scan complete. " .. self.scanProcessed .. " listings processed, " .. self:GetDBStats() .. " items in DB"
+        .. (IS_FOREVER and (" (" .. self:HouseName() .. ")") or "") .. ".")
     if AH.OnScanComplete then SafeCall(AH.OnScanComplete, AH, "full") end
     self:_TryDequeue()   -- anything queued meanwhile would otherwise wait for an event that may not come
 end
@@ -706,6 +785,7 @@ end
 function mod:OnEvent(event, ...)
     if event == "AUCTION_HOUSE_SHOW" then
         AH.ahOpen = true
+        AH.openHouse = IS_FOREVER and AH:HouseHere() or nil   -- prices read and written for THIS house until it closes
         AH.sessionStartGold = GetMoney()
         AH:ClearThrottleQueue()
         throttleReady = true
@@ -723,6 +803,7 @@ function mod:OnEvent(event, ...)
     elseif event == "AUCTION_HOUSE_CLOSED" then
         AH.ahOpen = false
         AH:AbortScan()
+        AH.openHouse = nil   -- after the scan stopped: nothing more is written for that house
         -- Calculate session profit
         local currentGold = GetMoney()
         AH.sessionProfit = currentGold - AH.sessionStartGold

@@ -48,6 +48,7 @@ A type picker at the top left switches between kinds of deals:
 ### Scan
 - **Full or browse scan** with a progress bar, throttled to stay within Blizzard's limits
 - A **per-realm price database** that persists between sessions; a full scan sets each item to today's lowest price, up or down
+- **WoW Forever: one price list per auction house.** Your faction's auction house, the other faction's, and the neutral one (Booty Bay, Gadgetzan and Everlook share it) are separate markets. At Booty Bay VoidAH scans and prices for Booty Bay, in your capital for your faction's house, and away from an auction house it uses your faction's prices. The Scan tab says which one you're looking at
 - **Prices stay fresh on their own** — if your last full scan is over 12 hours old, opening the AH runs one in the background while you browse
 - A **shopping list** with a Buy button on every row — survives reloads
 

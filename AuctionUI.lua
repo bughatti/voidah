@@ -4879,6 +4879,8 @@ local function UpdateScanProgress()
     stats = stats .. "Last full scan: |cffffffff" .. (lastFull > 0 and date("%H:%M:%S", lastFull) or "Never") .. "|r\n"
     stats = stats .. "Last browse scan: |cffffffff" .. (lastBrowse > 0 and date("%H:%M:%S", lastBrowse) or "Never") .. "|r\n"
     stats = stats .. "Realm: |cffffffff" .. GetRealmName() .. "|r"
+    -- WoW Forever: each auction house has its own prices (Auction.lua HouseKey)
+    if AH.openHouse then stats = stats .. "\nPrices for: |cffffffff" .. AH:HouseName() .. "|r" end
     parent._statsText:SetText(stats)
 
     UpdateShoppingList(parent)

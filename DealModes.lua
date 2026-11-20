@@ -8,7 +8,7 @@
 --   AH -> Vendor   listings cheaper than what a merchant pays for them: buy, then
 --                  sell to any vendor. Click a row to look it up in Browse.
 --
--- The vendor lists live in VoidGPS (VoidGPS.Goods, from NorgannonDB + Blizzard's
+-- The vendor lists live in VoidGPS (VoidGPS.Goods, from VoidDB + Blizzard's
 -- Forever item data). Prices are VoidAH's own scans; profit is after the AH cut
 -- VoidAH learned from your sales (Money.lua), 5% until it has.
 ----------------------------------------------------------------------

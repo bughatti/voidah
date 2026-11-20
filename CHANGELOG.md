@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.11.0] — 2026-11-20
+
+- **WoW Forever: prices per auction house.** Your faction's auction house, the other faction's, and the neutral one (Booty Bay, Gadgetzan and Everlook share it, and both factions trade there) are separate markets with their own prices. VoidAH now keeps each one apart: at Booty Bay it scans and prices for Booty Bay, in Orgrimmar for the Horde auction house, and away from an auction house (tooltips, plans, deals) it uses your faction's. The Scan tab says which house you're looking at. Your saved prices stay with your faction's house.
+
 ## [1.10.2] — 2026-11-12
 
 - **Item tooltips no longer cover the list.** Hovering a row in Browse, Sell or Deals opens the item tooltip beside the Auction House window (left of it when there is room), with the "Equipped" comparisons stacked under it.
