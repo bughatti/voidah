@@ -118,10 +118,46 @@ function AH:HouseName(house)
     return house == "Neutral" and "Booty Bay / Gadgetzan / Everlook" or (house .. " auction house")
 end
 
+-- The realm the prices are saved under. WoW Forever, 2026-11-21: GetRealmName() turned blank on the PC client
+-- overnight (the laptop's already was), and every bag tooltip lost its AH line: 7,281 prices sat under the old
+-- name. So the name the game gave before stays the key: remembered per realm (UnitFullName still names it).
+-- The first blank day falls back to the one named realm the house table (_base) knows. A client never seen
+-- with a name (the laptop) keeps "" as before.
+local function plain(v)
+    if (issecretvalue and issecretvalue(v)) or type(v) ~= "string" then return nil end
+    return v
+end
+function AH.Realm()
+    local r = plain(GetRealmName and GetRealmName()) or ""
+    local db = VoidUIAuctionDB
+    if type(db) ~= "table" then return r end
+    local full = plain(UnitFullName and select(2, UnitFullName("player")))
+    if full == "" then full = nil end
+    if r ~= "" then
+        if full then
+            db._realmName = db._realmName or {}
+            db._realmName[full] = r
+        end
+        return r
+    end
+    local known = full and db._realmName and db._realmName[full]
+    if known then return known end
+    local only, n = nil, 0
+    for k in pairs(type(db._base) == "table" and db._base or {}) do
+        if type(k) == "string" and k ~= "" then only, n = k, n + 1 end
+    end
+    if n ~= 1 then return r end
+    if full then
+        db._realmName = db._realmName or {}
+        db._realmName[full] = only
+    end
+    return only
+end
+
 -- The one-pool data from before stays where it was: it belongs to the faction that has been using it (a Forever
 -- PvP realm allows one faction per account), so the first faction house used here keeps the plain realm key.
 local function HouseKey(house)
-    local realm = GetRealmName()
+    local realm = AH.Realm()
     if not IS_FOREVER then return realm end
     house = house or AH:House()
     VoidUIAuctionDB._base = VoidUIAuctionDB._base or {}
@@ -276,7 +312,7 @@ function AH:GetLastFullScan()
     -- once per-house times exist, a house without one was never fully scanned (Sol: falling back to the one
     -- global time let another realm's or house's scan make it look fresh)
     if by then return by[key] or 0 end
-    if key == GetRealmName() then return VoidUIAuctionDB._lastFullScan or 0 end
+    if key == AH.Realm() then return VoidUIAuctionDB._lastFullScan or 0 end
     return 0
 end
 -- the server's limit on full scans is one timer for the whole client, whatever house
@@ -516,7 +552,7 @@ function AH:_FinishFullScan()
         -- first per-house scan: the one old time belongs to the plain pool, before it's overwritten below
         -- (else a Booty Bay scan made the faction house look freshly scanned; voidah-house-test)
         -- (0 = never: nil would fall back to the global time set just below, Sol)
-        VoidUIAuctionDB._lastScanBy = { [GetRealmName()] = VoidUIAuctionDB._lastFullScan or 0 }
+        VoidUIAuctionDB._lastScanBy = { [AH.Realm()] = VoidUIAuctionDB._lastFullScan or 0 }
     end
     VoidUIAuctionDB._lastFullScan = time()
     VoidUIAuctionDB._lastScanBy[HouseKey()] = time()

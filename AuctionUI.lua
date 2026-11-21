@@ -4075,7 +4075,7 @@ function FindDeals()
     dealResults = {}
     local cfg = VoidUI:GetModuleConfig("Auction")
     local threshold = cfg.dealThreshold or 80
-    local db = VoidUIAuctionDB and VoidUIAuctionDB[GetRealmName()]
+    local db = VoidUIAuctionDB and VoidUIAuctionDB[VoidUI.AH.Realm()]
     if not db then
         print("|cff00ffffVoidAH|r: No price data. Run a scan first.")
         return
@@ -4878,7 +4878,7 @@ local function UpdateScanProgress()
     local stats = "Items in DB: |cffffffff" .. AH:GetDBStats() .. "|r\n"
     stats = stats .. "Last full scan: |cffffffff" .. (lastFull > 0 and date("%H:%M:%S", lastFull) or "Never") .. "|r\n"
     stats = stats .. "Last browse scan: |cffffffff" .. (lastBrowse > 0 and date("%H:%M:%S", lastBrowse) or "Never") .. "|r\n"
-    stats = stats .. "Realm: |cffffffff" .. GetRealmName() .. "|r"
+    stats = stats .. "Realm: |cffffffff" .. VoidUI.AH.Realm() .. "|r"
     -- WoW Forever: each auction house has its own prices (Auction.lua HouseKey)
     if AH.openHouse then stats = stats .. "\nPrices for: |cffffffff" .. AH:HouseName() .. "|r" end
     parent._statsText:SetText(stats)

@@ -342,7 +342,7 @@ local function ago(sec)
 end
 
 local function toVendorData()
-    local db = VoidUIAuctionDB and VoidUIAuctionDB[GetRealmName()]
+    local db = VoidUIAuctionDB and VoidUIAuctionDB[VoidUI.AH.Realm()]
     local out, pending = {}, 0
     if not db then return out, 0 end
     local AH = VoidUI.AH
@@ -566,7 +566,7 @@ local function deValue(quality, ilvl, classID)
 end
 
 local function deData()
-    local db = VoidUIAuctionDB and VoidUIAuctionDB[GetRealmName()]
+    local db = VoidUIAuctionDB and VoidUIAuctionDB[VoidUI.AH.Realm()]
     local out, pending = {}, 0
     if not db then return out, 0 end
     local cut = cutRate()

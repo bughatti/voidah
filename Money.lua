@@ -46,7 +46,7 @@ end
 
 local function CharKey()
     local n = UnitName("player") or "?"
-    local r = (GetRealmName and GetRealmName() or ""):gsub("%s+", "")
+    local r = ((VoidUI.AH and VoidUI.AH.Realm and VoidUI.AH.Realm()) or ""):gsub("%s+", "")
     return n .. "-" .. r
 end
 

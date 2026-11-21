@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.11.1] — 2026-11-21
+
+- **Fixed on WoW Forever: no auction prices on item tooltips.** The game stopped telling addons your realm's name, so VoidAH looked for your prices under a blank name and found none: tooltips, deals and the money log went quiet. It now uses the realm name it saw before, so your saved prices show again. Per-character settings are found again too.
+
 ## [1.11.0] — 2026-11-20
 
 - **WoW Forever: prices per auction house.** Your faction's auction house, the other faction's, and the neutral one (Booty Bay, Gadgetzan and Everlook share it, and both factions trade there) are separate markets with their own prices. VoidAH now keeps each one apart: at Booty Bay it scans and prices for Booty Bay, in Orgrimmar for the Horde auction house, and away from an auction house (tooltips, plans, deals) it uses your faction's. The Scan tab says which house you're looking at. Your saved prices stay with your faction's house.
