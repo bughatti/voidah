@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.12.0] — 2026-11-22
+
+- **Prices you can trust.** An item's price is now the cheapest real listing: a handful of listings dumped far under the rest no longer set it (17 at 11g and 3 at 30s now reads 11g), and overpriced listings never count. On WoW Forever search results aren't sorted by price, so one troll listing could become the price (Scroll: UPDOG read 30g instead of 3s): fixed. The Sell tab says when it left cheap listings out.
+- **What actually sells (new):** two full scans of the same auction house within 3 hours show which listings were bought. VoidAH keeps 14 days of sales per item and says after a scan how many units sold since the last one. The first step toward pricing for how fast things sell.
+- **WoW Forever: gear you can't wear yet is easy to spot.** Equipping goes by required level there, not item level. Rows say **(requires 54)** in red, the tooltip says **Requires level N** (green when you can wear it), buying asks "Buy anyway", and **Usable only** checks the required level (it used to miss some items).
+
 ## [1.11.1] — 2026-11-21
 
 - **Fixed on WoW Forever: no auction prices on item tooltips.** The game stopped telling addons your realm's name, so VoidAH looked for your prices under a blank name and found none: tooltips, deals and the money log went quiet. It now uses the realm name it saw before, so your saved prices show again. Per-character settings are found again too.

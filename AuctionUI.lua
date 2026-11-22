@@ -807,6 +807,18 @@ local function CreateItemRow(parent, index)
             else
                 GameTooltip:SetItemByID(self._itemID)
             end
+            -- WoW Forever: the AH's item-group tooltip has no "Requires Level" line, and equipping goes by it, not the
+            -- item level (seen 2026-11-21 at Booty Bay: Assassination Blade, item level 57, requires 52). Say it:
+            -- green when you can wear it, red when you can't.
+            if (select(4, GetBuildInfo()) or 0) < 100000 and AH.RequiredLevel
+                    and C_Item.IsEquippableItem and C_Item.IsEquippableItem(self._itemID) then
+                local req, me = AH.RequiredLevel(self._itemID), UnitLevel("player") or 0
+                if req then
+                    local okLvl = me >= req
+                    GameTooltip:AddLine(("Requires level %d%s"):format(req, okLvl and "" or (" (you're %d)"):format(me)),
+                        okLvl and 0.25 or 1, okLvl and 1 or 0.25, 0.25)
+                end
+            end
             GameTooltip:Show()
         end
     end)
@@ -1421,8 +1433,27 @@ local function IsOldExpansionItem(itemID)
     return expac < cur
 end
 
--- true = hide (Usable only is on and this character can't use it). Uncached items stay
--- visible and are re-filtered when their data loads (shares expansionPending).
+-- The level an item needs before you can wear it: "Requires Level" from the item's own data. On WoW Forever this is
+-- what equipping checks (classic rules), not the item level, and C_AuctionHouse.GetItemKeyRequiredLevel returns nil
+-- there (measured 2026-11-21: level 1 character, Featherskin Cape requires 49, the key lookup gave nothing). The
+-- user, 2026-11-21: "i see an item level at an ilvl above me, i buy it and then find i cant equip it".
+-- nil = not loaded yet / no requirement.
+local function RequiredLevel(itemID)
+    local m = itemID and select(5, C_Item.GetItemInfo(itemID))
+    return (type(m) == "number" and m > 0) and m or nil
+end
+-- gear you're too low to wear: its required level, else nil
+local function TooLowFor(itemID)
+    local r = RequiredLevel(itemID)
+    if not (r and r > (UnitLevel("player") or 0)) then return nil end
+    local equip = C_Item.IsEquippableItem and C_Item.IsEquippableItem(itemID)
+    return equip and r or nil
+end
+AH.RequiredLevel, AH.TooLowFor = RequiredLevel, TooLowFor
+
+-- true = hide (Usable only is on and this character can't use it). An item whose data hasn't loaded yet is hidden
+-- too until it loads (then re-filtered: shares expansionPending): shown and filtered later left a window to buy one
+-- you can't wear (2026-11-21).
 local function IsUnusableResult(itemKey)
     if not UsableOnly() then return false end
     local itemID = itemKey and itemKey.itemID
@@ -1432,8 +1463,10 @@ local function IsUnusableResult(itemKey)
     if C_Item.IsItemDataCachedByID and not C_Item.IsItemDataCachedByID(itemID) then
         expansionPending[itemID] = true
         if C_Item.RequestLoadItemDataByID then C_Item.RequestLoadItemDataByID(itemID) end
-        return false
+        return true   -- hidden until we can check it
     end
+    local r = RequiredLevel(itemID)
+    if r and r > (UnitLevel("player") or 0) then return true end
     if C_PlayerInfo and C_PlayerInfo.CanUseItem then
         local ok, can = pcall(C_PlayerInfo.CanUseItem, itemID)
         if ok and can == false then return true end
@@ -1660,13 +1693,18 @@ ShowConfirmBar = function(opts)
         bar._info:SetText("|cff00c7ff" .. (opts.itemName or "item") .. "|r  —  " ..
             (buyoutSafe and VoidUI:FormatMoney(buyoutSafe) or "—") ..
             (avail > 1 and (" each  |cff888888(%d available)|r"):format(avail) or ""))
+        -- gear you can't wear yet: say so before the click (WoW Forever equips by required level, not item level)
+        local tooLow = TooLowFor(opts.itemID)
+        if tooLow then
+            bar._info:SetText(bar._info:GetText() .. ("  |cffff4040Requires level %d (you're %d): you can't wear it yet.|r"):format(tooLow, UnitLevel("player") or 0))
+        end
         -- Several identical auctions in one row: ask how many. Each one is its own auction,
         -- and PlaceBid needs a click per auction (restricted API), so Confirm Buy steps
         -- through them one click at a time, never above the starting price.
         bar._qtyLabel:SetShown(avail > 1)
         bar._qtyBox:SetShown(avail > 1)
         bar._qtyBox:SetText("1")
-        bar._confirmBtn._text:SetText("|cff00ff00Confirm Buy|r")
+        bar._confirmBtn._text:SetText(tooLow and "|cffff4040Buy anyway|r" or "|cff00ff00Confirm Buy|r")
         bar._confirmBtn:SetScript("OnClick", function()
             if opts.auctionID and buyoutSafe then
                 local m = bar._multi
@@ -1864,6 +1902,7 @@ PopulateBuyRow = function(row, listing, visualIndex)
                 isCommodity = false,
                 itemName = StripColor(buyItemName or "item"),
                 buyoutAmount = buyPrice,
+                itemID = buyItemKey and buyItemKey.itemID,   -- the "requires level" warning needs it (2026-11-21)
                 auctionID = listing.auctionID,
                 variant = listing.variant,
                 -- identical auctions grouped in one row ("Qty 15" bags): lets you buy several
@@ -1915,7 +1954,9 @@ local function PopulateBrowseRow(row, data, visualIndex)
     end
 
     row._icon:SetTexture(itemTexture or 134400)
-    row._name:SetText(itemName or ("Item " .. data.itemID))
+    -- gear you can't wear yet says so: WoW Forever equips by required level, not item level (2026-11-21)
+    local tooLow = TooLowFor(data.itemID)
+    row._name:SetText((itemName or ("Item " .. data.itemID)) .. (tooLow and (" |cffff4040(requires %d)|r"):format(tooLow) or ""))
     row._name:SetWidth(220)
 
     -- iLvl (green + arrow on the icon when it beats what you wear in that slot)
@@ -3500,7 +3541,7 @@ function SellTab_SetItem(parent, itemLocation)
     -- Store pending
     sellPending.itemLocation = itemLocation
     sellPending.itemID = itemID
-    sellPending._outlier = nil   -- set again when this item's live price comes in
+    sellPending._outlier, sellPending._dump = nil, nil   -- set again when this item's live price comes in
     sellPending._priceEdited = nil   -- set when the player types a price (live prices then leave it alone)
     sellPending.isCommodity = isCommodity
     -- Single-item listing (whole silver on Forever). Unknown status (data not loaded)
@@ -4129,7 +4170,8 @@ function FindDeals()
                 end
                 row._itemID = data.itemID
                 row._icon:SetTexture(itemTexture or select(5, GetItemInfoInstant(data.itemID)) or 134400)
-                row._name:SetText(itemName or ("Item " .. data.itemID))
+                local tooLow = TooLowFor(data.itemID)
+                row._name:SetText((itemName or ("Item " .. data.itemID)) .. (tooLow and (" |cffff4040(requires %d)|r"):format(tooLow) or ""))
                 row._qty:SetText("")
                 row._price:SetText(VoidUI:FormatMoney(data.price))
                 row._market:SetText(VoidUI:FormatMoney(data.mean))
@@ -4992,13 +5034,20 @@ function UpdateSellBreakdown(parent)
     local b = VoidAH_Money.Breakdown(link or sellPending.itemID, unit, qty, dep)
     local note = sellPending._outlier and ("\n|cffffd200The cheapest listing is far under its usual %s (7-day median): "
         .. "priced near that, not under the dump. Buying the cheap one to relist can pay.|r"):format(VoidUI:FormatMoney(sellPending._outlier)) or ""
+    -- listings far under the rest right now (AH.MarketPrice left them out): say so, so nobody wonders
+    local d = sellPending._dump
+    if d and note == "" then
+        note = ("\n|cffffd200%d listed far under the rest (from %s): left out, priced from the market. "
+            .. "Buying the cheap ones to relist can pay.|r"):format(d.lowN, VoidUI:FormatMoney(d.low))
+    end
     txt:SetText(VoidAH_Money.BreakdownText(b, exact, ({ "12h", "24h", "48h" })[duration]) .. note)
 end
 
 -- Live lowest price arrived for the item on the Sell tab: price it with the same
 -- % undercut SellTab_SetItem uses (the old path used the legacy flat 1s undercut,
 -- silently replacing the % price) and rebuild the info line instead of appending.
-function ApplySellLivePrice(parent, perUnit)
+-- mk (optional): AH.MarketPrice's info for this search (how many dumps it left out)
+function ApplySellLivePrice(parent, perUnit, mk)
     -- One listing far under the item's usual price is a dump, not the market: don't chase it
     -- down. The user, 2026-11-09: Recipe: Heavy Crocolisk Stew was 30-63s for days (40s 4h
     -- earlier), one listing at 2s 57c, and the tab said "vendor it" for 5s. Under half the
@@ -5018,7 +5067,72 @@ function ApplySellLivePrice(parent, perUnit)
     parent._sellInfo:SetText((sellPending._baseInfo or "") ..
         " | |cff00ff00Current: " .. VoidUI:FormatMoney(perUnit) .. "|r")
     sellPending._outlier = outlier   -- said under the breakdown (UpdateSellBreakdown)
+    sellPending._dump = (mk and mk.lowN and mk.lowN > 0 and mk.low) and mk or nil
     UpdateSellBreakdown(parent)
+end
+
+-- The market price from an item's search results (AH.MarketPrice: dumps and trolls left out), + its info.
+-- Every row, not row 1: WoW Forever doesn't hand them back cheapest first (2026-11-21, Scroll: UPDOG: single
+-- troll listings at 30g / 9g / 49g / 70g sat above ~20 rows at 3s, and the price saved was 30g).
+-- Bid-only auctions (no buyout) don't count.
+-- Only the WHOLE market: a search can come back in pages and on Forever the first page isn't the cheapest one
+-- (Sol 11-21), so a partial set asks the AH for the rest and returns nil, nil, true; the next results event
+-- (more rows) prices it again.
+local lastMore, retryMore = {}, {}
+local function WholeMarket(hasFull, requestMore, arg, id)
+    if not hasFull then return true end
+    local ok, full = pcall(hasFull, arg)
+    if not ok or full ~= false then return true end
+    local now = GetTime()
+    if requestMore and lastMore[id] ~= now then   -- once per results event (callers in one event share a frame)
+        lastMore[id] = now
+        pcall(requestMore, arg)
+    elseif requestMore and not retryMore[id] and C_Timer then
+        -- asked already this frame: the next page can arrive in the same frame, and then nothing would ask for the
+        -- page after it (Sol 11-22). Ask again a moment later if it's still not all in.
+        retryMore[id] = true
+        C_Timer.After(0.3, function()
+            retryMore[id] = nil
+            local ok2, full2 = pcall(hasFull, arg)
+            if ok2 and full2 == false then lastMore[id] = GetTime(); pcall(requestMore, arg) end
+        end)
+    end
+    return false
+end
+
+-- the listings -> AH.MarketPrice, judged against the item's usual daily low (3+ days), the plain low kept in history
+local function MarketFrom(list, itemID)
+    local usual, nDays = AH:GetMarketMean(itemID, 7)
+    local price, info = AH.MarketPrice(list, (nDays or 0) >= 3 and usual or nil)
+    if price and info and info.min then AH:NoteLow(itemID, info.min) end
+    return price, info
+end
+
+local function MarketItemPrice(searchItemKey)
+    if not WholeMarket(C_AuctionHouse.HasFullItemSearchResults, C_AuctionHouse.RequestMoreItemSearchResults,
+                       searchItemKey, searchItemKey.itemID) then return nil, nil, true end
+    local n = C_AuctionHouse.GetNumItemSearchResults(searchItemKey) or 0
+    local list = {}
+    for i = 1, n do
+        local r = C_AuctionHouse.GetItemSearchResultInfo(searchItemKey, i)
+        local b = r and VoidUI.AH.SafeNum(r.buyoutAmount)   -- per item (quantity = identical listings grouped)
+        if b and b > 0 then list[#list + 1] = { b, VoidUI.AH.SafeNum(r.quantity) or 1 } end
+    end
+    return MarketFrom(list, searchItemKey.itemID)
+end
+
+-- the same for a commodity (unit prices)
+local function MarketCommodityPrice(itemID)
+    if not WholeMarket(C_AuctionHouse.HasFullCommoditySearchResults, C_AuctionHouse.RequestMoreCommoditySearchResults,
+                       itemID, itemID) then return nil, nil, true end
+    local n = C_AuctionHouse.GetNumCommoditySearchResults(itemID) or 0
+    local list = {}
+    for i = 1, n do
+        local r = C_AuctionHouse.GetCommoditySearchResultInfo(itemID, i)
+        local u = r and VoidUI.AH.SafeNum(r.unitPrice)
+        if u and u > 0 then list[#list + 1] = { u, VoidUI.AH.SafeNum(r.quantity) or 1 } end
+    end
+    return MarketFrom(list, itemID)
 end
 
 function AH:OnItemSearchResults(itemKey)
@@ -5026,42 +5140,24 @@ function AH:OnItemSearchResults(itemKey)
     -- if this result was also interesting to another flow.
     if trashScanState and itemKey and itemKey.itemID and trashScanState.pending[itemKey.itemID] then
         local searchItemKey = C_AuctionHouse.MakeItemKey(itemKey.itemID)
-        local livePrice = nil
+        local livePrice, partial = nil, false
         if searchItemKey then
-            local numResults = C_AuctionHouse.GetNumItemSearchResults(searchItemKey)
-            if numResults and numResults > 0 then
-                local result = C_AuctionHouse.GetItemSearchResultInfo(searchItemKey, 1)
-                if result then
-                    local buyout = VoidUI.AH.SafeNum(result.buyoutAmount)
-                    local qty = VoidUI.AH.SafeNum(result.quantity) or 1
-                    if buyout then
-                        livePrice = buyout   -- per item already (quantity = identical listings grouped)
-                    end
-                end
-            end
+            local _
+            livePrice, _, partial = MarketItemPrice(searchItemKey)
         end
-        OnTrashScanResult(itemKey.itemID, livePrice)
+        if not partial then OnTrashScanResult(itemKey.itemID, livePrice) end   -- partial: wait for the rest
         -- Fall through so other flows (buy listings, sell pending) can still use it
     end
 
     -- Shopping list routing: if this item is from a shopping scan, handle it there
     if shopQueryActive and itemKey and itemKey.itemID and shopQueryPending[itemKey.itemID] then
         local searchItemKey = C_AuctionHouse.MakeItemKey(itemKey.itemID)
-        local livePrice = nil
+        local livePrice, partial = nil, false
         if searchItemKey then
-            local numResults = C_AuctionHouse.GetNumItemSearchResults(searchItemKey)
-            if numResults and numResults > 0 then
-                local result = C_AuctionHouse.GetItemSearchResultInfo(searchItemKey, 1)
-                if result then
-                    local buyout = VoidUI.AH.SafeNum(result.buyoutAmount)
-                    local qty = VoidUI.AH.SafeNum(result.quantity) or 1
-                    if buyout then
-                        livePrice = buyout   -- per item already (quantity = identical listings grouped)
-                    end
-                end
-            end
+            local _
+            livePrice, _, partial = MarketItemPrice(searchItemKey)
         end
-        OnShoppingSearchResult(itemKey.itemID, livePrice)
+        if not partial then OnShoppingSearchResult(itemKey.itemID, livePrice) end   -- partial: wait for the rest
         return
     end
 
@@ -5104,47 +5200,27 @@ function AH:OnItemSearchResults(itemKey)
     local searchItemKey = C_AuctionHouse.MakeItemKey(sellPending.itemID)
     if not searchItemKey then return end
 
-    local numResults = C_AuctionHouse.GetNumItemSearchResults(searchItemKey)
-    if numResults and numResults > 0 then
-        local result = C_AuctionHouse.GetItemSearchResultInfo(searchItemKey, 1)
-        local buyout = result and VoidUI.AH.SafeNum(result.buyoutAmount)
-        if buyout then
-            local qty = VoidUI.AH.SafeNum(result.quantity) or 1
-            -- buyoutAmount is per item; quantity counts identical listings grouped together (14 at
-            -- 36s read as 2s 57c each, 2026-11-09: Blizzard's own table shows buyoutAmount as is)
-            local perUnit = buyout
-            AH:SetPrice(sellPending.itemID, perUnit)
-            ApplySellLivePrice(tabFrames[2], perUnit)
-        end
+    -- the market price (buyoutAmount is per item; quantity counts identical listings grouped together:
+    -- 14 at 36s read as 2s 57c each, 2026-11-09)
+    local perUnit, mk = MarketItemPrice(searchItemKey)
+    if perUnit then
+        AH:SetPrice(sellPending.itemID, perUnit)
+        ApplySellLivePrice(tabFrames[2], perUnit, mk)
     end
 end
 
 function AH:OnCommoditySearchResults(itemID)
     -- Trash scan routing: always check first to populate the price DB.
     if trashScanState and itemID and trashScanState.pending[itemID] then
-        local livePrice = nil
-        local numResults = C_AuctionHouse.GetNumCommoditySearchResults(itemID)
-        if numResults and numResults > 0 then
-            local result = C_AuctionHouse.GetCommoditySearchResultInfo(itemID, 1)
-            if result then
-                livePrice = VoidUI.AH.SafeNum(result.unitPrice)
-            end
-        end
-        OnTrashScanResult(itemID, livePrice)
+        local livePrice, _, partial = MarketCommodityPrice(itemID)
+        if not partial then OnTrashScanResult(itemID, livePrice) end   -- partial: wait for the rest
         -- Fall through so other flows can still use the result
     end
 
     -- Shopping list routing: if this commodity is from a shopping scan, handle it there
     if shopQueryActive and itemID and shopQueryPending[itemID] then
-        local livePrice = nil
-        local numResults = C_AuctionHouse.GetNumCommoditySearchResults(itemID)
-        if numResults and numResults > 0 then
-            local result = C_AuctionHouse.GetCommoditySearchResultInfo(itemID, 1)
-            if result then
-                livePrice = VoidUI.AH.SafeNum(result.unitPrice)
-            end
-        end
-        OnShoppingSearchResult(itemID, livePrice)
+        local livePrice, _, partial = MarketCommodityPrice(itemID)
+        if not partial then OnShoppingSearchResult(itemID, livePrice) end   -- partial: wait for the rest
         return
     end
 
@@ -5174,15 +5250,10 @@ function AH:OnCommoditySearchResults(itemID)
     if not tabFrames or not tabFrames[2] then return end
     if not sellPending.itemID or sellPending.itemID ~= itemID then return end
 
-    local numResults = C_AuctionHouse.GetNumCommoditySearchResults(itemID)
-    if numResults and numResults > 0 then
-        local result = C_AuctionHouse.GetCommoditySearchResultInfo(itemID, 1)
-        local unitPrice = result and VoidUI.AH.SafeNum(result.unitPrice)
-        if unitPrice then
-            AH:SetPrice(itemID, unitPrice)
-
-            ApplySellLivePrice(tabFrames[2], unitPrice)
-        end
+    local unitPrice, mk = MarketCommodityPrice(itemID)
+    if unitPrice then
+        AH:SetPrice(itemID, unitPrice)
+        ApplySellLivePrice(tabFrames[2], unitPrice, mk)
     end
 end
 

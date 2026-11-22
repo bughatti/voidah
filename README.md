@@ -14,6 +14,7 @@ VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Se
 - **Category tree and search box**, results sorted by price or item level
 - **Filters menu**: Usable only, Upgrades only, Uncollected only, Midnight only, item quality, and **primary stat** (Any / your spec / Agility / Strength / Intellect)
 - **Max price** box — hide anything above your budget
+- **WoW Forever: what you can wear.** Gear goes by its required level there, not its item level, so a row of gear you're too low for says **(requires 54)** in red, its tooltip says **Requires level 54** (green when you can wear it), and buying it asks you first. **Usable only** hides it
 - **Upgrade arrows**: gear that beats what you're wearing in that slot gets an arrow and "+N ilvl". **Green** = it has your spec's two best secondary stats, **orange** = it's an upgrade but carries a weaker one, **grey** = an upgrade whose stats can't be read (hover to check). Stat priorities come from what the top Mythic+ players of each spec actually wear (Blizzard's own data)
 - **"Midnight only"** (on by default at max level, off while leveling) hides older-expansion items, so you never buy an old enchant or gem that won't work on current gear
 - **Secure buy bar** with a quantity box
@@ -21,7 +22,7 @@ VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Se
 
 ### Sell
 - Stack-size and total-quantity inputs with a **deposit calculator**
-- **Smart undercut** — fills in a price just below the cheapest listing. One listing dumped far under the item's usual price doesn't drag yours down: it prices near the usual and says why
+- **Smart undercut** — fills in a price just below the market. A handful of listings dumped far under the rest don't drag yours down (it says how many it left out), nor does one far under the item's usual price
 - **A second look before a bad price:** posting at under half an item's usual price, or for less than a vendor pays, asks you first
 - **What a listing really earns you:** the deposit (back if it sells, lost if not), the AH's cut, what you get, and whether that beats the vendor ("List it: +2s over vendor" or "Vendor it")
 - Prices follow each auction house's own rules (whole silver on retail; on WoW Forever, copper for stackable goods and whole silver for single items); soulbound and warbound items are hidden automatically
@@ -47,7 +48,8 @@ A type picker at the top left switches between kinds of deals:
 
 ### Scan
 - **Full or browse scan** with a progress bar, throttled to stay within Blizzard's limits
-- A **per-realm price database** that persists between sessions; a full scan sets each item to today's lowest price, up or down
+- A **per-realm price database** that persists between sessions; a full scan sets each item to today's market price, up or down: the cheapest real listing, with a handful dumped far under the rest left out and overpriced listings never counted
+- **What actually sells:** two full scans of the same auction house within 3 hours show which listings were bought: gone while they still had time left, and not above a cheaper one that stayed up (that's a cancel). VoidAH keeps 14 days of sales per item and says after each scan how many units sold since the last one
 - **WoW Forever: one price list per auction house.** Your faction's auction house, the other faction's, and the neutral one (Booty Bay, Gadgetzan and Everlook share it) are separate markets. At Booty Bay VoidAH scans and prices for Booty Bay, in your capital for your faction's house, and away from an auction house it uses your faction's prices. The Scan tab says which one you're looking at
 - **Prices stay fresh on their own** — if your last full scan is over 12 hours old, opening the AH runs one in the background while you browse
 - A **shopping list** with a Buy button on every row — survives reloads

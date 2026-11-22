@@ -209,7 +209,9 @@ end
 
 -- qty / auctions / name (optional): how many were listed, in how many auctions, and the item's
 -- name, for the "Auction House anywhere" window; a call without them keeps the last values.
-function AH:SetPrice(itemID, minBuyout, qty, auctions, name)
+-- rawLow (optional): the cheapest listing when the price left dumps out; the daily history keeps the plain
+-- cheapest (GetMarketMean judges dumps by it, so it must not learn from its own calls).
+function AH:SetPrice(itemID, minBuyout, qty, auctions, name, rawLow)
     if not itemID or not minBuyout or minBuyout <= 0 then return end
     local db = GetRealmDB()
     local key = tostring(itemID)
@@ -229,11 +231,16 @@ function AH:SetPrice(itemID, minBuyout, qty, auctions, name)
     if not entry.h then entry.h = {} end
     local day = DayIndex()
     local hist = entry.h[day]
+    if not rawLow and AH._pendingLow and AH._pendingLow[itemID] then   -- AH:NoteLow before the entry existed
+        rawLow = AH._pendingLow[itemID]
+        AH._pendingLow[itemID] = nil
+    end
+    local low = (rawLow and rawLow > 0 and rawLow < minBuyout) and rawLow or minBuyout
     if hist then
-        hist[1] = math.min(hist[1], minBuyout)
+        hist[1] = math.min(hist[1], low)
         hist[2] = math.max(hist[2], minBuyout)
     else
-        entry.h[day] = { minBuyout, minBuyout }
+        entry.h[day] = { low, minBuyout }
     end
     PruneHistory(entry)
 end
@@ -251,6 +258,22 @@ function AH:GetListed(itemID)
     return nil
 end
 
+-- The plain cheapest listing seen for an item (a search that left dumps out of its price): today's history low
+-- keeps it (see SetPrice's rawLow). An item not in the database yet is left to SetPrice.
+function AH:NoteLow(itemID, low)
+    if not (itemID and type(low) == "number" and low > 0) then return end
+    local entry = GetRealmDB()[tostring(itemID)]
+    if not entry then   -- not in the database yet: SetPrice puts it in today's history (Sol 11-21)
+        AH._pendingLow = AH._pendingLow or {}
+        AH._pendingLow[itemID] = low
+        return
+    end
+    entry.h = entry.h or {}
+    local day = DayIndex()
+    local hist = entry.h[day]
+    if hist then hist[1] = math.min(hist[1], low) else entry.h[day] = { low, low } end
+end
+
 function AH:GetPriceAge(itemID)
     local db = GetRealmDB()
     local entry = db[tostring(itemID)]
@@ -258,6 +281,52 @@ function AH:GetPriceAge(itemID)
         return time() - entry.t
     end
     return nil
+end
+
+-- The price of an item from what's listed right now: list = { { per-unit buyout, how many }, ... }.
+-- Not the first row (Forever doesn't sort them: Scroll: UPDOG read 30g from a troll listing on top), and not a
+-- few listings dumped far UNDER the rest (the user, 2026-11-21: "if we have say 17 listings that range from 11g
+-- to 15g and 3 listings at 30s to 1 gold someone could lose a lot of money on an item").
+-- Only the cheap end decides. The real market sits at the bottom: overpriced listings pile up because nobody buys
+-- them (a first try took the middle of everything listed and raised 1,130 of 6,784 prices 2x or more, e.g. Red
+-- Fireworks Rocket 29c -> 14s with 332 listed). So: walking up from the cheapest, a jump to DUMP_JUMP x the price
+-- below it, with at most DUMP_MAX_UNITS units and DUMP_SHARE of everything listed under the jump, marks what's under it as
+-- dumps; the price is
+-- the listing at the jump. No such jump: the cheapest listing, as always. Under MARKET_MIN_UNITS: the cheapest.
+-- usual (optional): the item's usual daily low (GetMarketMean, 3+ days). Cheap listings that have sat there for days
+-- are the market, not a dump (nobody buys them: Red Fireworks Rocket at 29c for 6 days), so with a history they
+-- count as dumps only when they're also under half of it.
+-- Returns price, info { lowN = units left out as dumps, low = the cheapest dump, min = the cheapest listing }, rows.
+-- A dump is a HANDFUL (the user's example: 3 listings). Measured on the laptop's scan 11-21: with only "a quarter of
+-- what's listed" the rule cut real supply (173 units at 25c, 26 at 1s, 13 at 27s-28s) because the long tail of hopeful
+-- prices makes the total huge; at most 5 units kept 108 of its 147 calls, all small groups (3 at 2g vs 13 at 10g 60s).
+local DUMP_SHARE, DUMP_JUMP, DUMP_MAX_UNITS, MARKET_MIN_UNITS = 0.2, 2, 5, 3
+AH.MARKET_RULE = { share = DUMP_SHARE, jump = DUMP_JUMP, maxUnits = DUMP_MAX_UNITS, min = MARKET_MIN_UNITS }   -- for the scan log
+function AH.MarketPrice(list, usual)
+    local rows, total = {}, 0
+    for _, l in ipairs(list or {}) do
+        local u, q = l[1], math.max(1, tonumber(l[2]) or 1)
+        if type(u) == "number" and u > 0 then
+            rows[#rows + 1] = { u, q }
+            total = total + q
+        end
+    end
+    if #rows == 0 then return nil end
+    table.sort(rows, function(a, b) return a[1] < b[1] end)
+    local info = { lowN = 0, min = rows[1][1] }
+    if total < MARKET_MIN_UNITS then return rows[1][1], info, rows end
+    local under, cut = 0, nil
+    for k = 2, #rows do
+        under = under + rows[k - 1][2]
+        if under > total * DUMP_SHARE or under > DUMP_MAX_UNITS then break end
+        if rows[k][1] >= rows[k - 1][1] * DUMP_JUMP and not (usual and usual > 0 and rows[k - 1][1] >= usual * 0.5) then
+            cut = k   -- the highest jump that qualifies (Sol 11-21: a later one that fails mustn't erase it)
+        end
+    end
+    if not cut then return rows[1][1], info, rows end
+    for i = 1, cut - 1 do info.lowN = info.lowN + rows[i][2] end
+    info.low = rows[1][1]
+    return rows[cut][1], info, rows
 end
 
 function AH:GetMarketMean(itemID, days)
@@ -439,7 +508,8 @@ function AH:StartFullScan()
     self.scanProgress = 0
     self.scanTotal = 0
     self.scanProcessed = 0
-    self._scanMin = {}   -- this scan's lowest per-unit buyout per item (applied at finish)
+    self._scanMin = {}   -- this scan's listings per item: { {per-unit buyout, count}, ... } (priced at finish)
+    self._scanDataAt = nil   -- set when this scan's data arrives (Sales.lua times the sales by it)
     -- and its listing counts / names: fresh every scan, so a cancelled one can't add to the
     -- next one's totals (Sol review)
     self._scanQty, self._scanN, self._scanName = {}, {}, {}
@@ -492,6 +562,8 @@ function AH:_ProcessReplicateBatch(startIndex, totalCount)
                 buyout = buyoutPrice,
                 count = count or 1,
                 name = name,
+                -- time-left band (0-3): tells a sale from an expiry between two scans (Sales.lua)
+                band = C_AuctionHouse.GetReplicateItemTimeLeft and C_AuctionHouse.GetReplicateItemTimeLeft(i),
             }
         end)
         -- every listing, also bid-only ones: how many are up and in how many auctions, and
@@ -505,14 +577,14 @@ function AH:_ProcessReplicateBatch(startIndex, totalCount)
             if type(data.name) == "string" and data.name ~= "" then self._scanName[data.itemID] = data.name end
         end
         if ok and data and data.itemID and data.buyout and data.buyout > 0 then
-            -- Track the lowest listing seen THIS scan. (Was compared against the
-            -- stored price, so a price could only ever go DOWN -- every item kept
-            -- its all-time low and a full scan never corrected a price that rose.)
+            -- Every listing seen THIS scan (never the stored price: a price could only ever go DOWN).
+            -- Priced at the finish by AH.MarketPrice: not simply the lowest one (2026-11-21).
             local perUnit = VoidAH_Money and VoidAH_Money.ReplicateUnitPrice(data.buyout, data.count)
                 or math.floor(data.buyout / math.max(1, data.count or 1))
             self._scanMin = self._scanMin or {}
-            local seen = self._scanMin[data.itemID]
-            if not seen or perUnit < seen then self._scanMin[data.itemID] = perUnit end
+            local list = self._scanMin[data.itemID]
+            if not list then list = {}; self._scanMin[data.itemID] = list end
+            list[#list + 1] = { perUnit, data.count or 1, VoidLib.Secrets.SafeNum(data.band), data.buyout }
         end
     end
 
@@ -534,10 +606,42 @@ function AH:_ProcessReplicateBatch(startIndex, totalCount)
 end
 
 function AH:_FinishFullScan()
-    -- Every item listed right now gets today's lowest price (up OR down).
+    -- Every item listed right now gets today's market price (up OR down), dumps left out (AH.MarketPrice).
     local qty, n, names = self._scanQty or {}, self._scanN or {}, self._scanName or {}
-    for itemID, price in pairs(self._scanMin or {}) do
-        self:SetPrice(itemID, price, qty[itemID], n[itemID], names[itemID])
+    -- the last scan's dump calls, to check the rule against real listings (2026-11-21): itemID -> "price|levels"
+    -- with the cheapest 12 price levels as "unit:qty"; replaced every full scan, at most 400 items
+    local log, logged = {}, 0
+    for itemID, list in pairs(self._scanMin or {}) do
+        local usual, nDays = self:GetMarketMean(itemID, 7)
+        local price, info, rows = AH.MarketPrice(list, (nDays or 0) >= 3 and usual or nil)
+        if price then
+            self:SetPrice(itemID, price, qty[itemID], n[itemID], names[itemID], info and info.min)
+            if info and info.lowN > 0 and logged < 400 and rows then
+                local levels, last = {}, nil
+                for _, r in ipairs(rows) do
+                    if r[1] == last then
+                        levels[#levels] = r[1] .. ":" .. (tonumber(levels[#levels]:match(":(%d+)$")) + r[2])
+                    elseif #levels < 12 then
+                        levels[#levels + 1] = r[1] .. ":" .. r[2]
+                        last = r[1]
+                    else
+                        break
+                    end
+                end
+                log[itemID] = price .. "|" .. table.concat(levels, ",")
+                logged = logged + 1
+            end
+        end
+    end
+    if type(VoidUIAuctionDB) == "table" and self._scanMin then
+        VoidUIAuctionDB._marketLog = { t = time(), rule = AH.MARKET_RULE, items = log }
+    end
+    -- what sold since this house's last scan (Sales.lua: listings gone while they still had time left)
+    self._salesFound = nil
+    if self._scanMin and AH.SalesFromScan then
+        -- timed when the data ARRIVED (the bands were read then), not when processing finished (Sol)
+        local ok, found = pcall(AH.SalesFromScan, HouseKey(), self._scanMin, self._scanDataAt or time())
+        if ok then self._salesFound = found end
     end
     self._scanMin, self._scanQty, self._scanN, self._scanName = nil, nil, nil, nil
     self.scanning = false
@@ -558,6 +662,9 @@ function AH:_FinishFullScan()
     VoidUIAuctionDB._lastScanBy[HouseKey()] = time()
     print("|cff00ffffVoidAH|r: Full scan complete. " .. self.scanProcessed .. " listings processed, " .. self:GetDBStats() .. " items in DB"
         .. (IS_FOREVER and (" (" .. self:HouseName() .. ")") or "") .. ".")
+    if self._salesFound then
+        print(("|cff00ffffVoidAH|r: %d units sold since this auction house's last scan."):format(self._salesFound))
+    end
     if AH.OnScanComplete then SafeCall(AH.OnScanComplete, AH, "full") end
     self:_TryDequeue()   -- anything queued meanwhile would otherwise wait for an event that may not come
 end
@@ -639,7 +746,14 @@ function AH:_ProcessBrowseResults()
         end
     end
     for itemID, price in pairs(cheapest) do
-        self:SetPrice(itemID, price, qty[itemID], nil, C_Item.GetItemNameByID(itemID))
+        -- a browse result only has the lowest listing, no spread to judge it by (AH.MarketPrice): one far
+        -- under the item's 7-day price (3+ days of data) is a dump; keep the price we had (2026-11-21)
+        local mean, nDays = self:GetMarketMean(itemID, 7)
+        if mean and nDays and nDays >= 3 and price < mean * 0.5 then
+            self:NoteLow(itemID, price)   -- the price stays; the history still sees it (Sol 11-21)
+        else
+            self:SetPrice(itemID, price, qty[itemID], nil, C_Item.GetItemNameByID(itemID))
+        end
     end
 
     self._browseCatItems = #results
@@ -848,6 +962,7 @@ function mod:OnEvent(event, ...)
     elseif event == "REPLICATE_ITEM_LIST_UPDATE" then
         if AH.scanning and AH.scanType == "full" and not AH._processingBatch then
             AH._processingBatch = true
+            AH._scanDataAt = time()   -- the moment the listings (and their time-left bands) were read
             local count = C_AuctionHouse.GetNumReplicateItems()
             if count and count > 0 then
                 AH.scanTotal = count
