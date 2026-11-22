@@ -3,7 +3,7 @@
 ## Title: |cff00c7ffVoidAH|r
 ## Notes: Standalone Auction House from VoidUI Discord: https://discord.gg/7ZHmx7zMDh
 ## Author: Vede
-## Version: 1.12.0
+## Version: 1.13.0
 ## SavedVariables: VoidUIAuctionDB
 ## OptionalDeps: VoidProf
 
@@ -19,6 +19,7 @@ ForeverReagents.lua
 ForeverTools.lua
 Auction.lua
 Sales.lua
+SellPlan.lua
 StatPriority.lua [ExcludeLoadGameType camelot]
 Pricing.lua
 Money.lua

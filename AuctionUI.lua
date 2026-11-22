@@ -3318,6 +3318,9 @@ function BuildSellTab(parent)
         local marketPrice = AH:GetPrice(sellPending.itemID)
         if not marketPrice or marketPrice <= 0 then return end
         local newPrice = UndercutPrice(marketPrice, cfg, sellPending.isItem)
+        -- the % undercut is the "Sell fast" price: the plan follows it, and that's the goal now (Sol 11-22)
+        if sellPending._planIn and sellPending._planIn.id == sellPending.itemID then sellPending._planIn.fast = newPrice end
+        cfg.sellGoal = "fast"
         parent._goldBox:SetText(tostring(math.floor(newPrice / 10000)))
         parent._silverBox:SetText(tostring(math.floor((newPrice % 10000) / 100)))
         parent._copperBox:SetText(tostring(newPrice % 100))
@@ -3420,6 +3423,56 @@ function BuildSellTab(parent)
         fs:SetText("")
         parent._recentPosts[i] = fs
     end
+
+    -- What sells (economy steps 1-2): the market's sales from your scans, and how YOUR listings of this item did
+    local salesLabel = parent:CreateFontString(nil, "OVERLAY")
+    VoidUI:SetFont(salesLabel, 10, "OUTLINE")
+    salesLabel:SetPoint("TOPLEFT", parent._recentPosts[3], "BOTTOMLEFT", 0, -14)
+    salesLabel:SetText("|cff00ffffWhat sells|r")
+    salesLabel:Hide()
+    parent._salesLabel = salesLabel
+    local salesText = parent:CreateFontString(nil, "OVERLAY")
+    VoidUI:SetFont(salesText, 9, "")
+    salesText:SetPoint("TOPLEFT", salesLabel, "BOTTOMLEFT", 0, -3)
+    salesText:SetWidth(370)
+    salesText:SetJustifyH("LEFT")
+    salesText:SetWordWrap(true)
+    salesText:SetSpacing(2)
+    salesText:SetText("")
+    parent._salesText = salesText
+
+    -- step 3: pick a goal. Each button shows its price and how long it should take; a click puts that price in the
+    -- boxes and keeps the goal for the next item.
+    local function PickGoal(goal)
+        local plan = sellPending._lastPlan
+        local opt = plan and plan[goal]
+        if not opt then return end
+        VoidUI:GetModuleConfig("Auction").sellGoal = goal
+        sellPending._priceEdited = nil   -- a goal picked: its price follows the plan again, not a typed one (Sol 11-22)
+        local p = opt.price
+        sellPending._applyingGoal = true
+        parent._goldBox:SetText(tostring(math.floor(p / 10000)))
+        parent._silverBox:SetText(tostring(math.floor((p % 10000) / 100)))
+        parent._copperBox:SetText(tostring(p % 100))
+        sellPending._applyingGoal = nil
+        UpdateSellBreakdown(parent)
+    end
+    local fastBtn = CreateButton(parent, 182, 22, "", function() PickGoal("fast") end)
+    fastBtn:SetPoint("TOPLEFT", salesText, "BOTTOMLEFT", 0, -6)
+    fastBtn:Hide()
+    local bestBtn = CreateButton(parent, 182, 22, "", function() PickGoal("best") end)
+    bestBtn:SetPoint("LEFT", fastBtn, "RIGHT", 6, 0)
+    bestBtn:Hide()
+    parent._fastBtn, parent._bestBtn = fastBtn, bestBtn
+    local planNote = parent:CreateFontString(nil, "OVERLAY")
+    VoidUI:SetFont(planNote, 9, "")
+    planNote:SetPoint("TOPLEFT", fastBtn, "BOTTOMLEFT", 0, -6)
+    planNote:SetWidth(370)
+    planNote:SetJustifyH("LEFT")
+    planNote:SetWordWrap(true)
+    planNote:SetSpacing(2)
+    planNote:SetText("")
+    parent._planNote = planNote
 
     -- Sellable Items header (right side)
     local sellBagHeader = parent:CreateFontString(nil, "OVERLAY")
@@ -3740,10 +3793,12 @@ function SellTab_PostAuction(parent)
     -- protected call is ADDON_ACTION_BLOCKED (reported 2026-10-21), and a
     -- needs-confirmation post was silently never confirmed.
     local args
+    local postedUnit = totalPrice
     if isCommodity then
         -- PostCommodity silently fails when unitPrice has any copper component
         -- (retail). ToSilver rounds to whole silver there, whole copper on Forever.
         local commodityPrice = ToSilver(totalPrice, false)
+        postedUnit = commodityPrice
         if commodityPrice ~= totalPrice then
             print(("|cffffaa00VoidAH|r: Commodity price rounded to %s (PostCommodity rejects copper)."):format(
                 VoidUI:FormatMoney(commodityPrice)))
@@ -3761,6 +3816,7 @@ function SellTab_PostAuction(parent)
                 VoidUI:FormatMoney(itemPrice)))
             totalPrice = itemPrice
         end
+        postedUnit = totalPrice
         args = { sellPending.itemLocation, duration, qty, nil, totalPrice }
         if C_AuctionHouse.PostItem(args[1], args[2], args[3], nil, totalPrice) then
             ShowPostConfirm(false, args, itemName)
@@ -3774,6 +3830,8 @@ function SellTab_PostAuction(parent)
     sellPending._lastPostName = itemName
     sellPending._lastPostQty = qty
     sellPending._lastPostPrice = totalPrice
+    -- what your own sales are read from (VoidAH_Money, economy step 2): item, price each as posted, duration, house
+    sellPending._lastPostInfo = { id = sellPending.itemID, unit = postedUnit, dur = duration, house = AH:HouseKey() }
 end
 
 ----------------------------------------------------------------------
@@ -5012,11 +5070,121 @@ function AH:OnAHClose()
     UpdateStatusBar()
 end
 
+-- Step 3 (SellPlan.lua): the plan for the Sell tab's item at the quantity and duration chosen now. Needs the live
+-- listings (sellPending._planIn, set when the search came back). Returns plan, rate, pace.
+local function CurrentPlan(parent)
+    local pin = sellPending._planIn
+    if not (pin and pin.id == sellPending.itemID and AH.SellPlan and AH.SellPace) then return nil end
+    local qty = math.max(1, tonumber(parent and parent._qtyBox and parent._qtyBox:GetText()) or 1)
+    if not sellPending.isCommodity then qty = 1 end
+    local isItem = sellPending.isItem
+    local rate, pace = AH:SellPace(sellPending.itemID)
+    local mine = VoidAH_Money and VoidAH_Money.MySales and VoidAH_Money.MySales(sellPending.itemID)
+    local plan = AH.SellPlan(pin.rows, qty, pin.fast, rate, pace, {
+        step = (isItem or not CopperAllowed()) and 100 or 1,
+        round = function(p) return ToSilver(p, isItem) end,
+        hours = ({ 12, 24, 48 })[sellPending.duration or 3],
+        ownHigh = mine and mine.soldHigh,
+        ownExpired = mine and mine.expLow,
+    })
+    return plan, rate, pace
+end
+
+-- Sell tab "What sells": the market's sales (Sales.lua) and your own (VoidAH_Money.MySales) for the selected item,
+-- at the house you're posting to; then the goals (step 3) with their prices and times.
+local function UpdateSellSales(parent)
+    local label, txt = parent and parent._salesLabel, parent and parent._salesText
+    if not (label and txt) then return end
+    local fastBtn, bestBtn, note = parent._fastBtn, parent._bestBtn, parent._planNote
+    local id = sellPending.itemID
+    if not (VoidAH_Money and VoidAH_Money.MySales and id) then
+        label:Hide(); txt:SetText("")
+        if fastBtn then fastBtn:Hide(); bestBtn:Hide(); note:SetText("") end
+        sellPending._lastPlan = nil
+        return
+    end
+    local market = VoidAH_Money.MarketSalesText(id)
+    local mine = VoidAH_Money.MySalesText(VoidAH_Money.MySales(id))
+    local lines = {}
+    lines[1] = market and ("Market here: " .. market)
+        or "|cff888888Market: no sales seen yet (two full scans within 3 hours show them).|r"
+    if mine then lines[2] = "Your listings here (14 days): " .. mine end
+    label:Show()
+    txt:SetText(table.concat(lines, "\n"))
+    if not fastBtn then return end
+
+    local function Money(c) return VoidUI:FormatMoney(math.max(0, math.floor(c or 0))) end
+    local plan, rate, pace = CurrentPlan(parent)
+    sellPending._lastPlan = plan
+    if not plan then fastBtn:Hide(); bestBtn:Hide(); note:SetText(""); return end
+    local goal = VoidUI:GetModuleConfig("Auction").sellGoal or "fast"
+    -- "Best price" chosen: the boxes follow it as quantity / duration change (more units = a lower best, or none:
+    -- then the fast price), never over a price the player typed (Sol 11-22). Setting the boxes runs this again.
+    if goal == "best" and not sellPending._priceEdited and not sellPending._applyingGoal then
+        local want = plan.best and plan.best.price or plan.fast.price
+        local cur = (tonumber(parent._goldBox:GetText()) or 0) * 10000 + (tonumber(parent._silverBox:GetText()) or 0) * 100
+            + (tonumber(parent._copperBox:GetText()) or 0)
+        if cur ~= want then
+            sellPending._applyingGoal = true
+            parent._goldBox:SetText(tostring(math.floor(want / 10000)))
+            parent._silverBox:SetText(tostring(math.floor((want % 10000) / 100)))
+            parent._copperBox:SetText(tostring(want % 100))
+            sellPending._applyingGoal = nil
+            UpdateSellBreakdown(parent)   -- once more with the final price (the boxes changed one at a time)
+            return
+        end
+    end
+    local function label_(name, opt, on)
+        local t = (on and "|cff3ddc84" or "|cffdddddd") .. name .. "|r " .. Money(opt.price)
+        local e = AH.EtaText(opt.eta)
+        return e and (t .. " |cff888888" .. e .. "|r") or t
+    end
+    fastBtn._text:SetText(label_("Sell fast", plan.fast, goal ~= "best" or not plan.best))
+    fastBtn:Show()
+    if plan.best then
+        bestBtn._text:SetText(label_("Best price", plan.best, goal == "best"))
+        bestBtn:Show()
+    else
+        bestBtn:Hide()
+    end
+    local notes = {}
+    if plan.above then
+        notes[#notes + 1] = ("|cffffd200Nothing has been seen selling above %s here (the cheaper ones sold first): at %s it may sit.|r"):format(
+            Money(plan.above), Money(plan.fast.price))
+    elseif not rate or not pace then
+        notes[#notes + 1] = "|cff888888How long it takes: run two full scans a little apart (each pair watches the market).|r"
+    elseif pace.few then
+        notes[#notes + 1] = ("|cff888888Too few sales seen to time it (%d in %s of watching).|r"):format(pace.sales,
+            pace.hours >= 1 and (math.floor(pace.hours + 0.5) .. "h") or (math.floor(pace.hours * 60) .. " min"))
+    elseif not plan.best then
+        local why = {
+            ceiling = ("nothing has been seen selling above %s here."):format(Money(plan.ceiling)),
+            expired = "your own listing at a higher price expired.",
+            slow = "a higher price wouldn't sell within 12h at the pace seen.",
+            top = "nothing is listed higher.",
+        }
+        notes[#notes + 1] = "|cff888888Best price is the fast price: " .. (why[plan.why] or why.slow) .. "|r"
+    end
+    if plan.best then
+        notes[#notes + 1] = ("|cff888888Best price waits behind %d listed under it; buyers take the cheapest first.|r"):format(plan.best.ahead)
+    end
+    if plan.slow then
+        notes[#notes + 1] = ("|cffffd200At the pace seen, about %d of these sell within %dh: list fewer, or expect the rest back.|r"):format(
+            plan.slow.fits, ({ 12, 24, 48 })[sellPending.duration or 3] or 48)
+    end
+    if plan.hold then
+        notes[#notes + 1] = ("|cffffd200Cheap today: it usually sells around %s. Best price waits for buyers, or keep it for later.|r"):format(
+            Money(plan.hold.usual))
+    end
+    note:SetText(table.concat(notes, "\n"))
+end
+
 -- Sell tab: what this listing costs and earns (deposit, AH cut, what you get, vs vendor),
 -- under Quantity. Redrawn on every price / quantity / duration change.
 function UpdateSellBreakdown(parent)
     local txt = parent and parent._depositText
     if not txt then return end
+    UpdateSellSales(parent)
     if not VoidAH_Money or not sellPending.itemID then txt:SetText(""); return end
     local unit = (tonumber(parent._goldBox:GetText()) or 0) * 10000
         + (tonumber(parent._silverBox:GetText()) or 0) * 100
@@ -5058,6 +5226,12 @@ function ApplySellLivePrice(parent, perUnit, mk)
         undercutFrom, outlier = mean, mean
     end
     local price = UndercutPrice(undercutFrom, nil, sellPending.isItem)
+    -- step 3: the plan queues behind what's listed now. With "Best price" chosen (and a best price known), post there.
+    sellPending._planIn = (mk and mk.rows) and { id = sellPending.itemID, rows = mk.rows, fast = price } or nil
+    if VoidUI:GetModuleConfig("Auction").sellGoal == "best" then
+        local plan = CurrentPlan(parent)
+        if plan and plan.best then price = plan.best.price end
+    end
     -- Never replace a price the player typed while the search was in flight.
     if not sellPending._priceEdited then
         parent._goldBox:SetText(tostring(math.floor(price / 10000)))
@@ -5103,8 +5277,9 @@ end
 -- the listings -> AH.MarketPrice, judged against the item's usual daily low (3+ days), the plain low kept in history
 local function MarketFrom(list, itemID)
     local usual, nDays = AH:GetMarketMean(itemID, 7)
-    local price, info = AH.MarketPrice(list, (nDays or 0) >= 3 and usual or nil)
+    local price, info, rows = AH.MarketPrice(list, (nDays or 0) >= 3 and usual or nil)
     if price and info and info.min then AH:NoteLow(itemID, info.min) end
+    if info then info.rows = rows end   -- every listing, cheapest first: the Sell tab's plan (step 3) queues behind them
     return price, info
 end
 
@@ -5261,7 +5436,7 @@ function AH:OnOwnedAuctionsUpdated()
     UpdateMyAuctions()
 end
 
-function AH:OnAuctionCreated()
+function AH:OnAuctionCreated(auctionID)
     print("|cff00ff00VoidAH|r: Auction posted successfully!")
 
     -- Update Recent Posts (server-confirmed)
@@ -5274,10 +5449,13 @@ function AH:OnAuctionCreated()
         end
         parent._recentPosts[1]:SetText("|cff00ff00" .. entry .. "|r")
         if VoidAH_Money then
-            VoidAH_Money.RecordPost(sellPending._lastPostName, sellPending._lastPostQty, sellPending._lastPostDeposit)
+            local info = sellPending._lastPostInfo or {}
+            info.aid = auctionID
+            VoidAH_Money.RecordPost(sellPending._lastPostName, sellPending._lastPostQty, sellPending._lastPostDeposit, info)
         end
         sellPending._lastPostName = nil
         sellPending._lastPostDeposit = nil
+        sellPending._lastPostInfo = nil
     end
 
     -- Refresh owned auctions + bag grid, then auto-select the next item

@@ -41,6 +41,8 @@ local function DB()
     m.zoneHouse = m.zoneHouse or {} -- [zone] = sender (the house your listings there sold through)
     m.depRate = m.depRate or {}     -- [duration] = { samples = { deposit / vendor value, ... } }
     m.chars = m.chars or {}         -- [Name-Realm] = { days = { [YYYY-MM-DD] = {...} }, pending = { ... } }
+    m.mine = m.mine or {}           -- [house][itemID] = { { t, out, unit, units, posted, lo, hi }, ... } (your own sales)
+    m.senderHouse = m.senderHouse or {} -- [mail sender] = house key (learned from your listings' sale mail)
     return m
 end
 
@@ -318,6 +320,12 @@ local function OnItemTooltip(tt, data)
     local listed = ah.GetListed and ah:GetListed(itemID)
     tt:AddLine(("|cff00c7ffVoidAH|r  AH %s each%s%s, you get %s after %s cut"):format(
         Money(p), ListedText(listed), AgeText(age), Money(net), PctText(rate, learned)), 0.85, 0.85, 0.85)
+    -- what sells (economy steps 1-2): one line, only when something is known
+    local market, mine = M.MarketSalesText(itemID, nil, true), M.MySalesText(M.MySales(itemID), true)
+    if market or mine then
+        tt:AddLine("  " .. (market and ("Sells: " .. market) or "") .. ((market and mine) and " · " or "")
+            .. (mine and ("you " .. mine) or ""), 0.7, 0.8, 0.9)
+    end
     -- a profit resting on one listing or an old price: say so where you'd act on it
     local shaky = (age and age >= STALE) or listed == 1
     -- On a merchant's page the question is buy here and resell, not list-or-vendor (the user, 2026-11-10,
@@ -367,49 +375,314 @@ end
 ----------------------------------------------------------------------
 -- Ledger: listings
 ----------------------------------------------------------------------
--- A listing went up (VoidAH's Sell tab, server-confirmed).
-function M.RecordPost(itemName, qty, deposit)
+-- A listing went up (VoidAH's Sell tab, server-confirmed). info (optional): { id = itemID, unit = price each,
+-- dur = 1/2/3 (12/24/48 h), house = AH.HouseKey at the post, aid = auctionID }: what your own sales are read from.
+local function plainNum(v)
+    if type(v) ~= "number" or (issecretvalue and issecretvalue(v)) then return nil end
+    return v
+end
+function M.RecordPost(itemName, qty, deposit, info)
     if not itemName then return end
     local d = Day()
     d.posted = d.posted + 1
     if deposit and deposit > 0 then d.depPaid = d.depPaid + deposit end
     local c = Char()
-    table.insert(c.pending, { name = itemName, qty = qty or 1, left = qty or 1, dep = deposit or 0, zone = Zone(), t = time() })
+    info = type(info) == "table" and info or {}
+    table.insert(c.pending, { name = itemName, qty = qty or 1, left = qty or 1, dep = deposit or 0, zone = Zone(), t = time(),
+        id = plainNum(info.id), unit = plainNum(info.unit), dur = plainNum(info.dur), house = info.house, aid = plainNum(info.aid) })
     while #c.pending > PENDING_MAX do table.remove(c.pending, 1) end
 end
 
 -- `count` units of this item were resolved (sold or returned): settle them against the
 -- open listings. Mail carries no auction ID, so a listing of exactly that many units
 -- wins (two listings of one item with different sizes stay apart); otherwise oldest
--- first, across as many listings as it takes. Returns the first listing touched and
--- the deposit those units carried.
-local function ResolvePending(itemName, count)
+-- first, across as many listings as it takes. unit (a sale's price each) and house (the mail's auction house),
+-- both optional, narrow it first: listings at that price and house, then at that price, then at that house, then
+-- any; the exact-size rule holds inside each step, so of 20 at 40s and 5 at 60s a sale of 5 at 40s settles part of
+-- the 40s listing (Sol 11-22). Returns the first listing touched, the deposit those units carried, every listing
+-- touched ({ { p = listing, units = n, done = units of it settled before } }), and the units no listing covered.
+local function ResolvePending(itemName, count, unit, house)
     local c = Char()
     local remaining = math.max(1, count or 1)
-    for i, p in ipairs(c.pending) do
-        if p.name == itemName and (p.left or p.qty or 1) == remaining then
-            local share = (p.qty and p.qty > 0) and math.floor((p.dep or 0) * remaining / p.qty + 0.5) or (p.dep or 0)
-            table.remove(c.pending, i)
-            return p, share
+    local steps = {}
+    if unit and house then steps[#steps + 1] = function(p) return p.unit == unit and p.house == house end end
+    if unit then steps[#steps + 1] = function(p) return p.unit == unit end end
+    if house then steps[#steps + 1] = function(p) return p.house == house end end
+    steps[#steps + 1] = function() return true end
+    -- a mail from a known house never settles a listing of ANOTHER house (Sol, release gate 11-22: a Horde sale with
+    -- no Horde listing took a Booty Bay one at that price); listings of no known house (older ones) still can
+    if house then
+        for i, fits in ipairs(steps) do
+            steps[i] = function(p) return (not p.house or p.house == house) and fits(p) end
         end
     end
-    local first, share = nil, 0
-    local i = 1
-    while i <= #c.pending and remaining > 0 do
-        local p = c.pending[i]
-        if p.name == itemName and (p.left or p.qty or 1) > 0 then
-            p.left = p.left or p.qty or 1
-            local units = math.min(remaining, p.left)
-            share = share + ((p.qty and p.qty > 0) and math.floor((p.dep or 0) * units / p.qty + 0.5) or (p.dep or 0))
-            p.left = p.left - units
-            remaining = remaining - units
-            first = first or p
-            if p.left <= 0 then table.remove(c.pending, i) else i = i + 1 end
+    local first, share, touched = nil, 0, {}
+    -- settle `units` of listing i; true when that used it up (it left the list)
+    local function take(i, p, units)
+        p.left = p.left or p.qty or 1
+        share = share + ((p.qty and p.qty > 0) and math.floor((p.dep or 0) * units / p.qty + 0.5) or (p.dep or 0))
+        touched[#touched + 1] = { p = p, units = units, done = (p.qty or p.left) - p.left }
+        p.left = p.left - units
+        remaining = remaining - units
+        first = first or p
+        if p.left <= 0 then table.remove(c.pending, i); return true end
+        return false
+    end
+    for _, fits in ipairs(steps) do
+        if remaining <= 0 then break end
+        local exact
+        for i, p in ipairs(c.pending) do
+            if p.name == itemName and (p.left or p.qty or 1) == remaining and fits(p) then exact = i; break end
+        end
+        if exact then
+            take(exact, c.pending[exact], remaining)
         else
-            i = i + 1
+            local i = 1
+            while i <= #c.pending and remaining > 0 do
+                local p = c.pending[i]
+                if p.name == itemName and (p.left or p.qty or 1) > 0 and fits(p) then
+                    if not take(i, p, math.min(remaining, p.left or p.qty or 1)) then i = i + 1 end
+                else
+                    i = i + 1
+                end
+            end
         end
     end
-    return first, share
+    return first, share, touched, remaining
+end
+
+----------------------------------------------------------------------
+-- Your own sales (economy step 2, 2026-11-22): what each of your listings did
+----------------------------------------------------------------------
+-- The user, 2026-11-21: "finding the price that sells the quickest". Step 1 (Sales.lua) reads the whole market from
+-- two scans; this is YOUR side: every listing VoidAH posted, at its price, and whether it sold (sale mail: the price
+-- really paid), expired or was cancelled (return mail). Kept per auction house, for all your characters.
+-- WHEN it sold: Forever's sale mail can't say (every "Auction successful" mail reads exactly 30 days left: VoidDev
+-- SaleProbe, 225 mails, 2026-11-10..21), so My Auctions does: each time VoidAH reads your auctions at that house,
+-- `seenAt` moves, and each time fewer units of a listing are up (fewer listed, Sold, or gone) a mark
+-- { n = units gone so far, by = this read, after = the read before } goes on its timeline. A sale of units k..k+n
+-- of the listing happened between the `after` and `by` of the first mark that reaches k+n (a stack bought in parts
+-- gets each part's own time: Sol 11-22).
+-- Records: { t = resolved, out = "sold"/"expired"/"cancelled", unit, units, posted = post time, lo, hi = seconds from
+-- the post to the sale (earliest, latest; nil when the post isn't known) }. No other player's name anywhere.
+local MINE_DAYS, MINE_PER_ITEM = 30, 50
+local DUR_SECS = { [1] = 12 * 3600, [2] = 24 * 3600, [3] = 48 * 3600 }
+
+local function ItemIDOf(name)
+    if type(name) ~= "string" or not (C_Item and C_Item.GetItemInfoInstant) then return nil end
+    local ok, id = pcall(C_Item.GetItemInfoInstant, name)
+    return ok and plainNum(id) or nil
+end
+
+-- the house an auction mail came from, and whether that's sure: by its name ("Horde Auction House", "Alliance
+-- Auction House"; "Blackwater Auction House" is the neutral one), else as learned from your own listings' sale mail
+-- (per realm: the same sender on another realm is another house key, Sol 11-22), else a guess (the house here).
+-- Retail keeps one pool anyway.
+local function SenderKey(sender)
+    local AH = AHDB()
+    local realm = AH and AH.Realm and AH.Realm() or ""
+    return realm .. "|" .. sender
+end
+local function SenderHouse(sender)
+    local AH = AHDB()
+    if not (AH and AH.HouseKey) then return nil, false end
+    if type(sender) == "string" then
+        if sender:find("Horde", 1, true) then return AH.HouseKey(nil, "Horde"), true end
+        if sender:find("Alliance", 1, true) then return AH.HouseKey(nil, "Alliance"), true end
+        if sender:find("Blackwater", 1, true) then return AH.HouseKey(nil, "Neutral"), true end
+        local known = DB().senderHouse[SenderKey(sender)]
+        if known then return known, true end
+    end
+    return AH.HouseKey(nil), false
+end
+
+local function AddMine(house, itemID, rec)
+    if not house or type(itemID) ~= "number" then return end
+    local db = DB()
+    local per = db.mine[house]
+    if not per then per = {}; db.mine[house] = per end
+    local list = per[itemID]
+    if not list then list = {}; per[itemID] = list end
+    list[#list + 1] = rec
+    while #list > MINE_PER_ITEM do table.remove(list, 1) end
+end
+
+-- seconds from the post to the sale of units done+1..done+units of listing p: earliest (the read before they were
+-- seen gone), latest (the read that saw them gone, else now); never past the listing's duration
+local function SoldWindow(p, done, units, now)
+    if not (p and p.t) then return nil, nil end
+    local target = (done or 0) + (units or 1)
+    local after, by = p.seenAt or p.t, now
+    for _, m in ipairs(p.marks or {}) do
+        if m.n >= target then after, by = m.after, m.by; break end
+    end
+    local lo, hi = math.max(0, after - p.t), math.max(0, by - p.t)
+    local cap = DUR_SECS[p.dur or 0]
+    if cap and hi > cap then hi = cap end
+    if lo > hi then lo = hi end
+    return lo, hi
+end
+
+-- what was resolved for `touched` listings (ResolvePending): sold at `unit` (the sale mail's price), or returned.
+-- left = sold units no listing covered (a listing VoidAH didn't post, or from before this version): the price, no time
+local function RecordOutcome(out, touched, unit, sender, itemName, left)
+    local now = time()
+    local mailHouse, sure = SenderHouse(sender)
+    local knownID
+    for _, tp in ipairs(touched or {}) do
+        local p = tp.p
+        local house = p.house or mailHouse
+        local id = p.id or ItemIDOf(itemName)
+        knownID = knownID or id
+        local u = (out == "sold" and unit) or p.unit
+        if u then
+            local lo, hi
+            if out == "sold" then lo, hi = SoldWindow(p, tp.done, tp.units, now) end
+            AddMine(house, id, { t = now, out = out, unit = u, units = tp.units, posted = p.t, lo = lo, hi = hi })
+        end
+        -- a sender the name rules don't know: learn its house from a listing that sold at exactly the mail's price
+        if out == "sold" and not sure and p.house and p.unit == unit and type(sender) == "string" then
+            DB().senderHouse[SenderKey(sender)] = p.house
+        end
+    end
+    if out == "sold" and unit and (left or 0) > 0 then
+        AddMine(mailHouse, ItemIDOf(itemName) or knownID, { t = now, out = out, unit = unit, units = left })
+    end
+end
+
+-- p was read with q units still up (0 = sold or gone): a mark when fewer are up than at the last mark
+local function Mark(p, q, now, gone)
+    p.marks = p.marks or {}
+    local n = math.max(0, (p.qty or 1) - q)
+    local last = p.marks[#p.marks]
+    if n > (last and last.n or 0) then
+        p.marks[#p.marks + 1] = { n = n, by = now, after = p.seenAt or p.t, gone = gone or nil }
+    end
+end
+
+-- My Auctions was read (OWNED_AUCTIONS_UPDATED): when did each of your listings still stand / sell / go.
+-- Only a complete list, and only your listings of the house that's open (Forever: each house lists its own).
+local function WatchOwned()
+    if not (C_AuctionHouse and C_AuctionHouse.GetNumOwnedAuctions and C_AuctionHouse.GetOwnedAuctionInfo) then return end
+    if C_AuctionHouse.HasFullOwnedAuctionResults and not C_AuctionHouse.HasFullOwnedAuctionResults() then return end
+    local AH = AHDB()
+    local here = AH and AH.HouseKey and AH.HouseKey(nil)
+    local open = {}
+    for _, p in ipairs(Char().pending) do
+        if p.aid and (not p.house or not here or p.house == here) then open[p.aid] = p end
+    end
+    if next(open) == nil then return end
+    local now = time()
+    local SOLD = Enum and Enum.AuctionStatus and Enum.AuctionStatus.Sold
+    local listed = {}
+    for i = 1, plainNum(C_AuctionHouse.GetNumOwnedAuctions()) or 0 do
+        local a = C_AuctionHouse.GetOwnedAuctionInfo(i)
+        local aid = a and plainNum(a.auctionID)
+        if aid then
+            listed[aid] = true
+            local p = open[aid]
+            if p then
+                -- listed after all: a "gone" from a read that missed it was wrong
+                local last = p.marks and p.marks[#p.marks]
+                if last and last.gone then table.remove(p.marks) end
+                local status = a.status
+                if issecretvalue and issecretvalue(status) then status = nil end
+                local q = (SOLD and status == SOLD) and 0 or plainNum(a.quantity) or (p.qty or 1)
+                Mark(p, q, now)
+                p.seenAt = now
+            end
+        end
+    end
+    -- gone from the list: sold, expired or cancelled (the mail says which). Not one posted moments ago: the
+    -- list read right after a post can still be the one from before it.
+    for aid, p in pairs(open) do
+        if not listed[aid] and now - (p.t or now) > 10 then Mark(p, 0, now, true) end
+    end
+end
+M._WatchOwned = WatchOwned   -- vah-mysales-test
+
+-- Your own sales of an item at a house (default: the one open, else your faction's) in the last `days` (14):
+-- { sold, soldN, soldMedian, soldLow, soldHigh, expired, expN, expLow, cancelled, within (median latest seconds to
+-- sell, of the sales with a known time), withinN }. nil when nothing sold or expired.
+function M.MySales(itemID, house, days)
+    local AH = AHDB()
+    house = house or (AH and AH.HouseKey and AH.HouseKey(nil))
+    local per = house and DB().mine[house]
+    local list = per and per[itemID]
+    if not list or #list == 0 then return nil end
+    local cut = time() - (days or 14) * 86400
+    local s = { sold = 0, soldN = 0, expired = 0, expN = 0, cancelled = 0, withinN = 0 }
+    local prices, times = {}, {}
+    for _, r in ipairs(list) do
+        if (r.t or 0) >= cut and r.unit then
+            local n = r.units or 1
+            if r.out == "sold" then
+                s.sold, s.soldN = s.sold + n, s.soldN + 1
+                s.soldLow = math.min(s.soldLow or r.unit, r.unit)
+                s.soldHigh = math.max(s.soldHigh or r.unit, r.unit)
+                prices[#prices + 1] = { r.unit, n }
+                if r.hi then times[#times + 1] = r.hi end
+            elseif r.out == "expired" then
+                s.expired, s.expN = s.expired + n, s.expN + 1
+                s.expLow = math.min(s.expLow or r.unit, r.unit)
+            elseif r.out == "cancelled" then
+                s.cancelled = s.cancelled + n
+            end
+        end
+    end
+    if s.sold == 0 and s.expired == 0 then return nil end
+    if #prices > 0 then
+        table.sort(prices, function(a, b) return a[1] < b[1] end)
+        local run = 0
+        for _, pr in ipairs(prices) do
+            run = run + pr[2]
+            if run * 2 >= s.sold then s.soldMedian = pr[1]; break end
+        end
+    end
+    if #times > 0 then
+        table.sort(times)
+        s.within, s.withinN = times[math.floor((#times + 1) / 2)], #times
+    end
+    return s
+end
+
+local function Span(sec)
+    if sec < 3600 then return ("%d min"):format(math.max(1, math.floor(sec / 60 + 0.5))) end
+    return ("%dh"):format(math.floor(sec / 3600 + 0.5))
+end
+
+-- "sold 12 of 15 at 41s (41s-43s), usually within 2h · 3 expired, from 47s" (no colour codes; nil without data)
+-- A time is said only when it's known to within half a day (a sale seen after a night away says nothing).
+-- short = the tooltip's form: "sold 12 of 15 at 41s"
+function M.MySalesText(s, short)
+    if not s then return nil end
+    local parts = {}
+    if s.sold > 0 then
+        local t = ("sold %d of %d at %s"):format(s.sold, s.sold + s.expired, Money(s.soldMedian or s.soldLow or 0))
+        if short then return t end
+        if s.soldHigh and s.soldLow and s.soldHigh > s.soldLow then
+            t = t .. (" (%s-%s)"):format(Money(s.soldLow), Money(s.soldHigh))
+        end
+        if s.within and s.within <= 12 * 3600 then
+            t = t .. (s.withinN >= 2 and ", usually within %s" or ", within %s"):format(Span(s.within))
+        end
+        parts[#parts + 1] = t
+    else
+        parts[#parts + 1] = ("none of %d sold"):format(s.expired)
+        if short then return parts[1] .. (s.expLow and (", from %s"):format(Money(s.expLow)) or "") end
+    end
+    if s.expired > 0 and s.expLow then
+        parts[#parts + 1] = ("%d expired, from %s"):format(s.expired, Money(s.expLow))
+    end
+    return table.concat(parts, " · ")
+end
+
+-- the market's side (Sales.lua, step 1): "240 seen sold in 24h, around 40s" (short: "240 in 24h at ~40s")
+function M.MarketSalesText(itemID, house, short)
+    local AH = AHDB()
+    local s = AH and AH.SoldSummary and AH:SoldSummary(itemID, house, 24)
+    if not s or not s.units or s.units <= 0 then return nil end
+    return (short and "%d in 24h at ~%s" or "%d seen sold in 24h, around %s"):format(s.units, Money(s.median or 0))
 end
 
 ----------------------------------------------------------------------
@@ -422,15 +695,22 @@ local function SubjectPattern(fmt)
     return "^" .. pat .. "$"
 end
 
+-- the item a returned-auction mail is for, and why it came back ("expired" / "cancelled")
 local function ReturnedItemName(subject)
     if type(subject) ~= "string" then return nil end
-    for _, fmt in ipairs({ AUCTION_EXPIRED_MAIL_SUBJECT, AUCTION_REMOVED_MAIL_SUBJECT }) do
-        local pat = SubjectPattern(fmt)
+    for _, r in ipairs({ { AUCTION_EXPIRED_MAIL_SUBJECT, "expired" }, { AUCTION_REMOVED_MAIL_SUBJECT, "cancelled" } }) do
+        local pat = SubjectPattern(r[1])
         local name = pat and subject:match(pat)
         -- a returned stack's subject ends in its size: "Copper Ore (20)"
-        if name then return (name:gsub("%s*%(%d+%)$", "")) end
+        if name then return (name:gsub("%s*%(%d+%)$", "")), r[2] end
     end
     return nil
+end
+
+-- "Auction successful: Healing Potion (18)" -> 18 (the invoice's own count when it has none)
+local function SubjectCount(subject)
+    local n = type(subject) == "string" and tonumber(subject:match("%((%d+)%)%s*$"))
+    return n
 end
 
 local waitMoney = {}  -- sale mail whose money was asked for: committed when gold rises by exactly that
@@ -457,19 +737,20 @@ local function OnTakeRequest(index, money, items)
             if w.index == index and w.amount == cash and w.bid == bid and w.sender == sender and now - w.t < 15 then dup = true end
         end
         if invoiceType == "seller" and type(bid) == "number" and bid > 0 and not dup then
+            if not (type(count) == "number" and count > 0) then count = SubjectCount(subject) end
             table.insert(waitMoney, { index = index, amount = cash, sender = sender, item = itemName, bid = bid,
                 deposit = deposit or 0, cut = consignment or 0, count = count or 1, t = now })
         end
     end
     if items then
-        local name = ReturnedItemName(subject)
+        local name, kind = ReturnedItemName(subject)
         if name then
             local qty = 0
             for a = 1, (ATTACHMENTS_MAX_RECEIVE or 16) do
                 local _, _, _, n = GetInboxItem(index, a)
                 if n then qty = qty + n end
             end
-            table.insert(waitItems, { subject = subject, item = name, qty = math.max(1, qty),
+            table.insert(waitItems, { subject = subject, item = name, qty = math.max(1, qty), kind = kind, sender = sender,
                 before = CountSubject(subject), t = now })
         end
     end
@@ -486,8 +767,12 @@ local function CommitSale(w)
         db.cut[w.sender] = db.cut[w.sender] or {}
         AddSample(db.cut[w.sender], w.cut / w.bid)
     end
-    local p = ResolvePending(w.item, w.count)
+    -- the price really paid, each: the sale total over the units (bid, not a buyout: a bid can win under it)
+    local unit = math.floor(w.bid / math.max(1, w.count or 1) + 0.5)
+    local house, sure = SenderHouse(w.sender)
+    local p, _, touched, left = ResolvePending(w.item, w.count, unit, sure and house or nil)
     if p and p.zone and w.sender then db.zoneHouse[p.zone] = w.sender end
+    RecordOutcome("sold", touched, unit, w.sender, w.item, left)
 end
 
 local function OnMoneyChanged()
@@ -522,8 +807,10 @@ local function OnInboxChanged()
             end
             local d = Day()
             d.expired = d.expired + 1
-            local _, share = ResolvePending(w.item, w.qty)
+            local house, sure = SenderHouse(w.sender)
+            local _, share, touched = ResolvePending(w.item, w.qty, nil, sure and house or nil)
             d.depLost = d.depLost + (share or 0)
+            RecordOutcome(w.kind or "expired", touched, nil, w.sender, w.item, 0)
         elseif t - w.t > 15 then
             table.remove(waitItems, i)
         else
@@ -541,7 +828,20 @@ local function Prune()
             for k in pairs(c.days) do if k < cutoff then c.days[k] = nil end end
         end
     end
+    -- your own sales: MINE_DAYS, every house (also one you stopped using)
+    local cut = time() - MINE_DAYS * 86400
+    local mine = DB().mine
+    for house, per in pairs(mine) do
+        for id, list in pairs(per) do
+            for i = #list, 1, -1 do
+                if (list[i].t or 0) < cut then table.remove(list, i) end
+            end
+            if #list == 0 then per[id] = nil end
+        end
+        if next(per) == nil then mine[house] = nil end
+    end
 end
+M._Prune = Prune   -- vah-mysales-test
 
 ----------------------------------------------------------------------
 -- Ledger: totals and display
@@ -613,6 +913,7 @@ f:RegisterEvent("PLAYER_MONEY")
 f:RegisterEvent("MAIL_INBOX_UPDATE")
 f:RegisterEvent("MAIL_SEND_SUCCESS")
 f:RegisterEvent("MAIL_FAILED")
+f:RegisterEvent("OWNED_AUCTIONS_UPDATED")
 f:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_LOGIN" then
         lastMoney = GetMoney()
@@ -640,6 +941,8 @@ f:SetScript("OnEvent", function(_, event)
             d.postage = d.postage + pendingPostage
         end
         pendingPostage = nil
+    elseif event == "OWNED_AUCTIONS_UPDATED" then
+        pcall(WatchOwned)   -- timing only: never let it break the ledger
     elseif event == "MAIL_FAILED" then
         pendingPostage = nil
         -- a take that failed must not be matched to later gold of the same amount

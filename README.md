@@ -23,6 +23,9 @@ VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Se
 ### Sell
 - Stack-size and total-quantity inputs with a **deposit calculator**
 - **Smart undercut** — fills in a price just below the market. A handful of listings dumped far under the rest don't drag yours down (it says how many it left out), nor does one far under the item's usual price
+- **Sell fast or best price:** two buttons under **What sells** show the price for each goal and how long it should take to sell. **Sell fast** is your usual undercut; **Best price** is the highest price that should still sell within 12 hours. VoidAH works that out from how fast the item really sells there and from the listings cheaper than yours (buyers take the cheapest first). It never suggests more than the item has been seen selling for, nor a price where your own listings expired. Your choice stays for the next item
+- **Warnings when they matter:** "about 5 of these sell within 48h: list fewer" when there are more than the market takes in time, and "cheap today: it usually sells around X" when the market is well under what it sells for
+- **What sells:** what the market bought here (from your full scans) and how your own listings of the item did: "sold 12 of 15 at 41s, usually within 2h · 3 expired, from 47s"
 - **A second look before a bad price:** posting at under half an item's usual price, or for less than a vendor pays, asks you first
 - **What a listing really earns you:** the deposit (back if it sells, lost if not), the AH's cut, what you get, and whether that beats the vendor ("List it: +2s over vendor" or "Vendor it")
 - Prices follow each auction house's own rules (whole silver on retail; on WoW Forever, copper for stackable goods and whole silver for single items); soulbound and warbound items are hidden automatically
@@ -36,6 +39,7 @@ VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Se
 - Any item you can sell shows its **AH price, what you'd get after the cut, and whether to list it or vendor it**, from your own scans. Soulbound items are left alone
 - **WoW Forever: "Kept: you need it (Fishing)"** under the price of a tool or class item you need, instead of "list it" advice
 - **How fresh the price is:** "· 1h 27m ago" on every price (orange after 6 hours) and "· 1 listed" when a single listing sets it
+- **What sells:** "Sells: 240 in 24h at ~40s · you sold 12 of 15 at 41s" when your scans or your own sales know it
 - **At a merchant: buy here, resell on the AH.** Items a vendor sells show their real profit after the AH cut ("Buy here 14s 40c, resell: +26s 47c profit each"), and say to check the AH first when the price is old or from one listing
 
 ### Deals
@@ -49,7 +53,7 @@ A type picker at the top left switches between kinds of deals:
 ### Scan
 - **Full or browse scan** with a progress bar, throttled to stay within Blizzard's limits
 - A **per-realm price database** that persists between sessions; a full scan sets each item to today's market price, up or down: the cheapest real listing, with a handful dumped far under the rest left out and overpriced listings never counted
-- **What actually sells:** two full scans of the same auction house within 3 hours show which listings were bought: gone while they still had time left, and not above a cheaper one that stayed up (that's a cancel). VoidAH keeps 14 days of sales per item and says after each scan how many units sold since the last one
+- **What actually sells:** two full scans of the same auction house within 3 hours show which listings were bought: gone while they still had time left, not above a cheaper one that stayed up (that's a cancel), and not put back up cheaper (that's a reprice). VoidAH keeps 14 days of sales per item and says after each scan how many units sold since the last one. The more scan pairs you run, the better it knows how fast each item sells
 - **WoW Forever: one price list per auction house.** Your faction's auction house, the other faction's, and the neutral one (Booty Bay, Gadgetzan and Everlook share it) are separate markets. At Booty Bay VoidAH scans and prices for Booty Bay, in your capital for your faction's house, and away from an auction house it uses your faction's prices. The Scan tab says which one you're looking at
 - **Prices stay fresh on their own** — if your last full scan is over 12 hours old, opening the AH runs one in the background while you browse
 - A **shopping list** with a Buy button on every row — survives reloads
@@ -108,7 +112,7 @@ You rarely need it — VoidAH opens automatically when you talk to an Auctioneer
 - **For the best prices,** run a full scan first, and open each profession window once so VoidAH knows your recipes.
 - Your price history is shared with **VoidBags**, which uses it to spot items worth selling.
 - **The AH's cut is learned from your own sales.** No game API tells addons the cut, so VoidAH reads it from your sale mail, per auction house. Until your first sale there it assumes 5% and says so ("5%?").
-- **The ledger counts what it sees:** listings made with VoidAH, and sale and return mail you take while it's running. It stores money totals only, on your own computer.
+- **The ledger counts what it sees:** listings made with VoidAH, and sale and return mail you take while it's running. It stores money totals, and for each item your listings' prices and whether they sold (30 days), on your own computer. Nothing about other players.
 
 ---
 

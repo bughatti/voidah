@@ -12,13 +12,15 @@
 --   * no seller names anywhere: a listing is item, unit price, stack size, band
 --   * VoidUIAuctionDB._snap[house] = { t, items = { [itemID] = "unit:count:band:n;..." } } (the last scan only)
 --   * VoidUIAuctionDB._sold[house][itemID] = { { t, unit, units }, ... } (the newest MAX_PER_ITEM, KEEP_DAYS days)
+--   * VoidUIAuctionDB._obs[house] = { { from, to }, ... }: the stretches the comparisons watched (SellPlan.lua's pace)
 -- Counted as UNITS gone at each unit price (goods here are a quantity at a price, bought in part: see group()). What
 -- it doesn't know: a cancelled listing looks like a sale; new listings at the same price hide sales (never invent one).
 ----------------------------------------------------------------------
 local AH = VoidUI and VoidUI.AH
 if not AH then return end
 
-local SALES_VER = 3   -- bump when the counting changes: older sales data is dropped (3: not above a price that stayed up)
+local SALES_VER = 4   -- bump when the counting changes: older sales data is dropped (3: not above a price that stayed up;
+                      -- 4: not when as many new units came up cheaper, a reprice)
 local MAX_GAP = 3 * 3600
 local MARGIN = 5 * 60   -- slack on the gap: when the data was read vs. when the scan was timed (Sol)
 local KEEP_DAYS = 14
@@ -81,6 +83,7 @@ local function record(house, itemID, t, unit, units, auctions)
 end
 
 -- every house, every scan: a house you stop scanning still loses its old sales (Sol)
+local MAX_OBS = 500
 local function prune(now)
     local cut = now - KEEP_DAYS * 86400
     for house, per in pairs(VoidUIAuctionDB._sold or {}) do
@@ -89,6 +92,10 @@ local function prune(now)
             if #list == 0 then per[id] = nil end
         end
         if next(per) == nil then VoidUIAuctionDB._sold[house] = nil end
+    end
+    for house, obs in pairs(VoidUIAuctionDB._obs or {}) do
+        while obs[1] and (obs[1][2] < cut or #obs > MAX_OBS) do table.remove(obs, 1) end
+        if #obs == 0 then VoidUIAuctionDB._obs[house] = nil end
     end
 end
 
@@ -100,7 +107,7 @@ function AH.SalesFromScan(house, lists, now)
     now = now or time()
     local db = VoidUIAuctionDB
     -- version 1 (2026-11-21, a few hours) counted a pile bought in part as all of it sold: drop its data once
-    if db._salesVer ~= SALES_VER then db._sold, db._snap, db._salesVer = nil, nil, SALES_VER end
+    if db._salesVer ~= SALES_VER then db._sold, db._snap, db._obs, db._salesVer = nil, nil, nil, SALES_VER end
     db._snap = db._snap or {}
     local cur = {}
     for itemID, list in pairs(lists) do cur[itemID] = group(list) end
@@ -108,6 +115,10 @@ function AH.SalesFromScan(house, lists, now)
     local found
     if prev and prev.t and now > prev.t and now - prev.t <= MAX_GAP and type(prev.items) == "table" then
         found = 0
+        -- the stretch of time this comparison watched (step 3: how fast an item sells = units seen sold / hours watched)
+        db._obs = db._obs or {}
+        db._obs[house] = db._obs[house] or {}
+        table.insert(db._obs[house], { prev.t, now })
         local gap, mid = now - prev.t, math.floor((prev.t + now) / 2)
         for idKey, s in pairs(prev.items) do
             local itemID = tonumber(idKey) or idKey
@@ -123,10 +134,30 @@ function AH.SalesFromScan(house, lists, now)
                     if not kept or k < kept then kept = k end
                 end
             end
-            for key, bands in pairs(before) do
+            -- units listed since at a LOWER price: a stack cancelled and put back up cheaper (an undercut war) is gone at
+            -- its old price but was never bought (laptop 11-22: Thick Leather "sold" ~2,400 at 6s74 with the market at
+            -- 4s17 after). So units gone at a price count as sold only beyond the new units under it. Cheapest gone
+            -- price first, each new unit used once. It can hide a real sale; it never invents one.
+            local keys = {}
+            for key in pairs(before) do keys[#keys + 1] = key end
+            table.sort(keys, function(a, b) return tonumber(a) < tonumber(b) end)
+            local fresh = {}
+            for key, bands in pairs(after) do
+                local n = total(bands) - total(before[key])
+                if n > 0 then fresh[#fresh + 1] = { tonumber(key), n } end
+            end
+            table.sort(fresh, function(a, b) return a[1] < b[1] end)
+            local fi, pool = 1, 0
+            for _, key in ipairs(keys) do
+                local bands = before[key]
+                while fresh[fi] and fresh[fi][1] < tonumber(key) do pool = pool + fresh[fi][2]; fi = fi + 1 end
                 -- units gone at this price (more listed since by others only hides sales: never invents one)
                 local gone = total(bands) - total(after[key])
                 if gone > 0 and kept and tonumber(key) > kept then gone = 0 end
+                if gone > 0 and pool > 0 then
+                    local use = math.min(gone, pool)   -- repriced down, not bought (assumed the longest-lived ones)
+                    gone, pool = gone - use, pool - use
+                end
                 if gone > 0 then
                     local unit = math.floor(tonumber(key) / 100 + 0.5)
                     local sold = 0

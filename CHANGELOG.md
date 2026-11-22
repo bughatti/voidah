@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.0] — 2026-11-22
+
+- **Sell fast or best price (new).** Two buttons on the Sell tab show the price for each goal and how long it should take: **Sell fast** (your usual undercut) and **Best price** (the highest price that should still sell within 12 hours, from how fast the item sells there and the listings cheaper than yours). Never above what the item has been seen selling for, nor where your own listings expired. Your choice stays for the next item. Often the best price is just under the next listing instead of 5% under the cheapest.
+- **Warnings:** when more are listed than the market takes within the listing's time, and when the market is well under what the item usually sells for.
+- **Your own sales (new):** each listing you post is remembered with its price, and its sale or return mail says how it went. The Sell tab's **What sells** shows it ("sold 12 of 15 at 41s, usually within 2h · 3 expired, from 47s"), with the market's sales from your scans; tooltips get one short line.
+- **Sales from scans count better:** a stack taken down and put back up cheaper is no longer counted as sold (older sales data is reset once).
+
 ## [1.12.0] — 2026-11-22
 
 - **Prices you can trust.** An item's price is now the cheapest real listing: a handful of listings dumped far under the rest no longer set it (17 at 11g and 3 at 30s now reads 11g), and overpriced listings never count. On WoW Forever search results aren't sorted by price, so one troll listing could become the price (Scroll: UPDOG read 30g instead of 3s): fixed. The Sell tab says when it left cheap listings out.

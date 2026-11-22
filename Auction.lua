@@ -996,7 +996,7 @@ function mod:OnEvent(event, ...)
         if AH.OnOwnedAuctionsUpdated then AH:OnOwnedAuctionsUpdated() end
 
     elseif event == "AUCTION_HOUSE_AUCTION_CREATED" then
-        if AH.OnAuctionCreated then AH:OnAuctionCreated() end
+        if AH.OnAuctionCreated then AH:OnAuctionCreated(...) end   -- the new auction's ID (VoidAH_Money: your own sales)
 
     elseif event == "COMMODITY_PRICE_UPDATED" then
         if AH.OnCommodityPriceUpdated then AH:OnCommodityPriceUpdated(...) end
