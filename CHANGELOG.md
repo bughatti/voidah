@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.15.0] — 2026-11-23
+
+- **When does it sell best? (new).** From your full scans in pairs (two scans up to 3 hours apart show what sold in between), VoidAH works out how many of an item sell per hour at each time of day, by server time in 2-hour blocks. The Sell tab says "Sells best around 8 PM-10 PM server time: about 3.0 an hour, 0.5 at other times", and the item's tooltip adds "sells best 8 PM-10 PM". Only with 3 sales seen, 3 times of day each watched for an hour on at least 2 different days (one morning of scans is lumps, not a pattern), and a clear difference; until then the Sell tab says what's missing. Hours nobody watched are never guessed.
+
 ## [1.14.0] — 2026-11-23
 
 - **Watch an item for a price (new).** Put an item on the **Scan** tab's shopping list with the most you'd pay (or 0 for automatic). Every time VoidAH sees it on the auction house, it checks it: at or under your price you get a chat line and a sound ("Garona at 13g 97s, your max 25g (7 up)"). One alert per item per 15 minutes, unless it gets cheaper.

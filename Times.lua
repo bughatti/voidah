@@ -270,3 +270,121 @@ function T.TooltipText(itemID)
     end
     return T.AggText(itemID)
 end
+
+----------------------------------------------------------------------
+-- When it SELLS best (the user, 2026-11-23: "add the sell time-of-day to voidah"). Sales.lua sees sales between two
+-- full scans of the same house (_obs[house] = the stretches watched { from, to, offset }, _sold[house][itemID] =
+-- { { t = the stretch's middle, unit, units }, ... }). Per 2-hour block: units sold / hours watched, each stretch's
+-- sales spread over the blocks it covered by the time it spent in each. A block counts with SELL_MIN_HOURS watched
+-- over SELL_MIN_DAYS different days; a best time is named with SELL_MIN_BLOCKS such blocks, SELL_MIN_SALES sales of
+-- the item and the best selling at least SELL_GAIN times the other blocks' median. Hours nobody watched are never
+-- guessed. The days rule: one morning of scans (Death Bobb, 11-23: 13 stretches 4-10 AM) named a "best time" for
+-- 3,296 items, each from a single 20-minute stretch: lumps, not a time of day.
+----------------------------------------------------------------------
+local SELL_MIN_HOURS, SELL_MIN_DAYS, SELL_MIN_BLOCKS, SELL_MIN_SALES, SELL_GAIN = 1, 2, 3, 3, 1.25
+
+-- the server offset a stretch was watched with (stored since 1.15.0). Stretches from before 1.15.0 have no offset and are left out: this PC's daylight saving doesn't tell the realm's
+-- (a PC on UTC never changes; Sol 11-23), and they're gone after 14 days anyway. A stretch over the night the clocks
+-- change keeps one offset: at most 3 hours, twice a year, an hour off (accepted).
+local function stretchOffset(o)
+    if type(o[3]) == "number" then return o[3] end
+end
+
+-- { [block] = { hours = watched, units = sold (spread), v = units per hour } }, sales seen
+function T.SellBlocks(itemID, house)
+    house = house or AH:HouseKey()
+    local db = VoidUIAuctionDB
+    local obs = type(db) == "table" and db._obs and db._obs[house]
+    local per = {}
+    if type(obs) ~= "table" then return per, 0 end
+    local sold = db._sold and db._sold[house] and db._sold[house][itemID] or {}
+    local nSales = 0
+    local span = BLOCK_H * 3600
+    -- Sales.lua keeps an item's last SALES_MAX_PER_ITEM sales but the stretches longer: with the list full, the
+    -- older stretches lost their sales and would count as watched with nothing sold (Sol 11-23). Only from the
+    -- oldest sale still kept.
+    local since
+    if #sold >= (AH.SALES_MAX_PER_ITEM or 60) then
+        for _, s in ipairs(sold) do if not since or s[1] < since then since = s[1] end end
+    end
+    for _, o in ipairs(obs) do
+        local from, to = o[1], o[2]
+        local off = type(from) == "number" and type(to) == "number" and to > from and not (since and from < since)
+            and stretchOffset(o)
+        if off then
+            local units = 0
+            for _, s in ipairs(sold) do
+                if s[1] > from and s[1] < to then units = units + (s[3] or 0); nSales = nSales + 1 end
+            end
+            local t = from
+            while t < to do
+                local sv = t + off * 60
+                local nextT = sv - sv % span + span - off * 60   -- the next block boundary, in real time
+                local seg = math.min(nextT, to) - t
+                if seg <= 0 then break end
+                local b = T.Block(t, off)
+                local e = per[b]
+                if not e then e = { hours = 0, units = 0, days = {}, nDays = 0 }; per[b] = e end
+                local day = math.floor(sv / 86400)   -- the server's date
+                if not e.days[day] then e.days[day] = true; e.nDays = e.nDays + 1 end
+                e.hours = e.hours + seg / 3600
+                e.units = e.units + units * seg / (to - from)
+                t = t + seg
+            end
+        end
+    end
+    for _, e in pairs(per) do e.v = e.hours > 0 and e.units / e.hours or 0 end
+    return per, nSales
+end
+
+local function counts(e) return e.hours >= SELL_MIN_HOURS and e.nDays >= SELL_MIN_DAYS end
+
+-- the best block for selling (more sold per hour = better): block, the other blocks' median rate; nil without enough
+local function sellBest(per, nSales)
+    if (nSales or 0) < SELL_MIN_SALES then return nil end
+    local q = {}
+    for b, e in pairs(per) do if counts(e) then q[#q + 1] = b end end
+    if #q < SELL_MIN_BLOCKS then return nil end
+    table.sort(q, function(a, c)
+        if per[a].v ~= per[c].v then return per[a].v > per[c].v end
+        return a < c
+    end)
+    local top = q[1]
+    local others = {}
+    for i = 2, #q do others[#others + 1] = per[q[i]].v end
+    local rest = median(others) or 0
+    if per[top].v <= 0 or per[top].v < rest * SELL_GAIN then return nil end
+    return top, rest
+end
+
+local function rate(v)
+    if v >= 10 then return tostring(math.floor(v + 0.5)) end
+    return ("%.1f"):format(v)
+end
+
+-- the Sell tab's line: when it sells best, or what's still missing; nil when nothing was ever watched
+function T.SellText(itemID, house)
+    local per, nSales = T.SellBlocks(itemID, house)
+    if next(per) == nil then return nil end
+    local b, rest = sellBest(per, nSales)
+    if b then
+        return ("Sells best around %s server time: about %s an hour, %s at other times"):format(
+            T.Label(b), rate(per[b].v), rate(rest))
+    end
+    local watched = 0
+    for _, e in pairs(per) do if counts(e) then watched = watched + 1 end end
+    if nSales < SELL_MIN_SALES then
+        return ("|cff888888Best time to sell: %d sale%s seen so far (needs %d)|r"):format(nSales, nSales == 1 and "" or "s", SELL_MIN_SALES)
+    end
+    if watched < SELL_MIN_BLOCKS then
+        return ("|cff888888Best time to sell: needs %d times of day each watched an hour on %d different days, has %d. Two full scans up to 3 hours apart watch the time between them.|r"):format(
+            SELL_MIN_BLOCKS, SELL_MIN_DAYS, watched)
+    end
+    return "|cff888888Best time to sell: about the same at every time watched|r"
+end
+
+-- the tooltip's short form ("sells best 8 PM-10 PM"), nil without a clear best time
+function T.SellShort(itemID, house)
+    local b = sellBest(T.SellBlocks(itemID, house))
+    return b and ("sells best " .. T.Label(b)) or nil
+end

@@ -12,7 +12,8 @@
 --   * no seller names anywhere: a listing is item, unit price, stack size, band
 --   * VoidUIAuctionDB._snap[house] = { t, items = { [itemID] = "unit:count:band:n;..." } } (the last scan only)
 --   * VoidUIAuctionDB._sold[house][itemID] = { { t, unit, units }, ... } (the newest MAX_PER_ITEM, KEEP_DAYS days)
---   * VoidUIAuctionDB._obs[house] = { { from, to }, ... }: the stretches the comparisons watched (SellPlan.lua's pace)
+--   * VoidUIAuctionDB._obs[house] = { { from, to, offset }, ... }: the stretches the comparisons watched (SellPlan.lua's
+--     pace; Times.lua's best time to sell, with the server clock offset of the time, 1.15.0 on)
 -- Counted as UNITS gone at each unit price (goods here are a quantity at a price, bought in part: see group()). What
 -- it doesn't know: a cancelled listing looks like a sale; new listings at the same price hide sales (never invent one).
 ----------------------------------------------------------------------
@@ -25,6 +26,7 @@ local MAX_GAP = 3 * 3600
 local MARGIN = 5 * 60   -- slack on the gap: when the data was read vs. when the scan was timed (Sol)
 local KEEP_DAYS = 14
 local MAX_PER_ITEM = 60
+AH.SALES_MAX_PER_ITEM = MAX_PER_ITEM   -- Times.lua: when an item's list is full, its older stretches lost their sales
 -- the least time a listing in each band still had when it was seen
 local BAND_MIN = { [0] = 0, [1] = 30 * 60, [2] = 2 * 3600, [3] = 12 * 3600 }
 
@@ -118,7 +120,8 @@ function AH.SalesFromScan(house, lists, now)
         -- the stretch of time this comparison watched (step 3: how fast an item sells = units seen sold / hours watched)
         db._obs = db._obs or {}
         db._obs[house] = db._obs[house] or {}
-        table.insert(db._obs[house], { prev.t, now })
+        -- 3rd: the server clock offset then (Times.lua: when it sells best, by server time; daylight saving moves it)
+        table.insert(db._obs[house], { prev.t, now, AH.Times and AH.Times.Offset() or nil })
         local gap, mid = now - prev.t, math.floor((prev.t + now) / 2)
         for idKey, s in pairs(prev.items) do
             local itemID = tonumber(idKey) or idKey

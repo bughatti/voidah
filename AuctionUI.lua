@@ -5141,7 +5141,10 @@ local function UpdateSellSales(parent)
     local lines = {}
     lines[1] = market and ("Market here: " .. market)
         or "|cff888888Market: no sales seen yet (two full scans within 3 hours show them).|r"
-    if mine then lines[2] = "Your listings here (14 days): " .. mine end
+    if mine then lines[#lines + 1] = "Your listings here (14 days): " .. mine end
+    -- when it sells best, by server time (Times.lua; the user, 2026-11-23: "add the sell time-of-day")
+    local when = AH.Times and AH.Times.SellText(id)
+    if when then lines[#lines + 1] = when end
     label:Show()
     txt:SetText(table.concat(lines, "\n"))
     if not fastBtn then return end

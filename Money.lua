@@ -323,8 +323,10 @@ local function OnItemTooltip(tt, data)
     -- what sells (economy steps 1-2): one line, only when something is known
     local market, mine = M.MarketSalesText(itemID, nil, true), M.MySalesText(M.MySales(itemID), true)
     if market or mine then
+        -- and when it sells best, once the scans know it (Times.lua, 2026-11-23): "· sells best 8 PM-10 PM"
+        local best = market and ah.Times and ah.Times.SellShort(itemID)
         tt:AddLine("  " .. (market and ("Sells: " .. market) or "") .. ((market and mine) and " · " or "")
-            .. (mine and ("you " .. mine) or ""), 0.7, 0.8, 0.9)
+            .. (mine and ("you " .. mine) or "") .. (best and (" · " .. best) or ""), 0.7, 0.8, 0.9)
     end
     -- a watched item (the shopping list, Watch.lua): your max, the last price seen, how often it was under your max
     local watch = ah.Watch and ah.Watch.TooltipText(itemID)
