@@ -86,6 +86,10 @@ if not VoidUI or not VoidUI.NewModule then
             autoScanWhenStale = true,
             undercutCopper  = 100,
             showBagValues   = true,
+            -- shopAlertOnOpen (search each shopping-list item when the AH opens) stays OFF: turned on 11-23 for the
+            -- watch alerts, a non-commodity item's search (Garona) was never answered on WoW Forever and every AH
+            -- search after it waited forever, through a /reload (laptop test). Watched items are read by the full
+            -- scan instead (Auction.lua: a scan on each visit while the list has items, Watch.lua).
         },
     }
 

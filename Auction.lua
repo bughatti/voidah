@@ -67,6 +67,11 @@ AH._processingBatch = false    -- guard against overlapping batch chains
 -- Throttle queue
 local throttleQueue = {}
 local throttleReady = true
+-- The game's "ready" signal can stop coming (WoW Forever laptop, 2026-11-23: IsThrottledMessageSystemReady stayed false
+-- for minutes with nothing of ours in flight, every search and the full scan waited forever, through a /reload).
+-- Waited this long for it: send anyway (Blizzard's own AH window never waits; the server queues or drops the message,
+-- and a drop is retried, _OnThrottleDropped).
+local STUCK_SECS = 5
 
 ----------------------------------------------------------------------
 -- Safe callback helper (prints errors instead of swallowing them)
@@ -127,31 +132,109 @@ local function plain(v)
     if (issecretvalue and issecretvalue(v)) or type(v) ~= "string" then return nil end
     return v
 end
+-- A client the game NEVER gave a realm name (2026-11-23, the user: "fix the blank house name on death bobb"; the
+-- laptop too) kept everything under "" and " [Alliance]". It now takes the realm UnitFullName names ("Tinkerline"),
+-- and moves what it saved under the blank key there ONCE (MoveBlank). Every table keyed by house or realm moves.
+local function MoveBlank(db, to)
+    local function rk(k)
+        if k == "" then return to end
+        if type(k) == "string" and k:sub(1, 2) == " [" then return to .. k end   -- " [Alliance]" -> "Tinkerline [Alliance]"
+    end
+    local function moveKeys(t, rename)
+        if type(t) ~= "table" then return end
+        local mv = {}
+        for k in pairs(t) do
+            local n = rename(k)
+            if n then mv[k] = n end
+        end
+        for k, n in pairs(mv) do
+            if t[n] == nil then t[n], t[k] = t[k], nil end   -- never over data already under the new key
+        end
+    end
+    moveKeys(db, rk)   -- the price pools
+    for _, name in ipairs({ "_lastScanBy", "_snap", "_sold", "_obs", "_watchLog", "_timeAgg", "_base" }) do
+        moveKeys(db[name], rk)
+    end
+    moveKeys(db._watchNow, function(k)   -- "house|itemID"
+        local h, id = tostring(k):match("^(.-)|(%d+)$")
+        local n = h and rk(h)
+        return n and (n .. "|" .. id)
+    end)
+    local m = db.money
+    if type(m) == "table" then
+        moveKeys(m.mine, rk)
+        local short = to:gsub("%s+", "")
+        moveKeys(m.chars, function(k)   -- "Name-" (blank realm) -> "Name-Tinkerline"
+            return type(k) == "string" and k:sub(-1) == "-" and (k .. short) or nil
+        end)
+        moveKeys(m.senderHouse, function(k)   -- "|sender" -> "Tinkerline|sender"
+            return type(k) == "string" and k:sub(1, 1) == "|" and (to .. k) or nil
+        end)
+        for k, v in pairs(type(m.senderHouse) == "table" and m.senderHouse or {}) do
+            local n = rk(v)
+            if n then m.senderHouse[k] = n end
+        end
+        for _, c in pairs(type(m.chars) == "table" and m.chars or {}) do
+            for _, p in ipairs(type(c) == "table" and type(c.pending) == "table" and c.pending or {}) do
+                local n = type(p) == "table" and rk(p.house)
+                if n then p.house = n end
+            end
+        end
+    end
+end
+AH._MoveBlank = MoveBlank   -- for the test
+
+local function remember(db, full, name)
+    db._realmName = db._realmName or {}
+    db._realmName[full] = name
+end
+
 function AH.Realm()
     local r = plain(GetRealmName and GetRealmName()) or ""
     local db = VoidUIAuctionDB
     if type(db) ~= "table" then return r end
     local full = plain(UnitFullName and select(2, UnitFullName("player")))
     if full == "" then full = nil end
-    if r ~= "" then
-        if full then
-            db._realmName = db._realmName or {}
-            db._realmName[full] = r
-        end
-        return r
-    end
+    -- the first name a realm got stays its key, also if the game names it again later (or differently): the data
+    -- never strands a second time (11-23)
     local known = full and db._realmName and db._realmName[full]
     if known then return known end
+    -- WoW Forever: the "realm" UnitFullName gives is a per-character surname (Vede-Tinkerline, Death-Bobb,
+    -- Sideous-Slytalker), while every character on the server shares ONE auction house. So with no realm name from the
+    -- game, an alt takes the one name this client already uses, instead of starting an empty pool (11-23, Death Bobb).
+    if full and r == "" and type(db._realmName) == "table" then
+        local one, cnt, seen = nil, 0, {}
+        for _, v in pairs(db._realmName) do
+            if type(v) == "string" and v ~= "" and not seen[v] then seen[v] = true; one = v; cnt = cnt + 1 end
+        end
+        if cnt == 1 then
+            remember(db, full, one)
+            return one
+        end
+        if cnt > 1 then   -- two names already: no pick, no move; its own pool under its own surname (Sol 11-23)
+            remember(db, full, full)
+            return full
+        end
+    end
+    if r ~= "" then
+        if full then remember(db, full, r) end
+        return r
+    end
     local only, n = nil, 0
     for k in pairs(type(db._base) == "table" and db._base or {}) do
-        if type(k) == "string" and k ~= "" then only, n = k, n + 1 end
+        if type(k) == "string" and k ~= "" and k:sub(1, 2) ~= " [" then only, n = k, n + 1 end
     end
-    if n ~= 1 then return r end
-    if full then
-        db._realmName = db._realmName or {}
-        db._realmName[full] = only
+    if n == 1 then
+        if full then remember(db, full, only) end
+        return only
     end
-    return only
+    -- never named (Death Bobb, the laptop): the realm UnitFullName names, the blank-key data moved there once
+    if full and n == 0 then
+        remember(db, full, full)
+        MoveBlank(db, full)
+        return full
+    end
+    return r   -- two named realms and no memory, or no UnitFullName realm yet (early load): no guess
 end
 
 -- The one-pool data from before stays where it was: it belongs to the faction that has been using it (a Forever
@@ -431,11 +514,27 @@ function AH:_TryDequeue()
         -- busy, AUCTION_HOUSE_THROTTLED_SYSTEM_READY will call us back.
         if C_AuctionHouse.IsThrottledMessageSystemReady
            and not C_AuctionHouse.IsThrottledMessageSystemReady() then
-            break
+            local now = GetTime()
+            self._notReadySince = self._notReadySince or now
+            if now - self._notReadySince < STUCK_SECS then
+                if not self._notReadyTimer and C_Timer then   -- look again once the wait is over
+                    self._notReadyTimer = true
+                    C_Timer.After(STUCK_SECS + 0.1, function()
+                        self._notReadyTimer = nil
+                        if self.ahOpen then self:_TryDequeue() end
+                    end)
+                end
+                break
+            end
+            -- waited STUCK_SECS: the signal isn't coming, send anyway (see STUCK_SECS)
         end
+        self._notReadySince = nil
         throttleReady = false
         local func = table.remove(throttleQueue, 1)
         self._inFlight = func
+        -- (No timer to move on when no answer comes: a drop event names no message, so a late drop of this one
+        -- would retry the NEXT one, maybe a purchase or a post. Sol 11-23. Stuck on the laptop was the ready
+        -- signal, with nothing in flight: handled above.)
         local ok, err = pcall(func)
         if not ok then
             print("|cffff0000VoidAH|r: Throttle error: " .. tostring(err))
@@ -515,13 +614,12 @@ function AH:StartFullScan()
     self._scanQty, self._scanN, self._scanName = {}, {}, {}
     self._scanGen = (self._scanGen or 0) + 1   -- delayed callbacks of an older scan check this
 
-    self:_Enqueue(function()
+    -- Sent at once, not through the throttle queue: ReplicateItems uses no throttle slot, and in the queue it waited
+    -- behind searches the game never let through (WoW Forever laptop, 2026-11-23: "scanning" with nothing asked for).
+    do
         VoidUIAuctionDB._lastReplicateCall = time()
-        C_AuctionHouse.ReplicateItems()
-        -- ReplicateItems does NOT use a throttle slot or fire
-        -- _SYSTEM_READY. Without this, any work queued after it would
-        -- sit dead until the full scan completed (~minutes).
-        throttleReady = true
+        local ok, err = pcall(C_AuctionHouse.ReplicateItems)
+        if not ok then print("|cffff0000VoidAH|r: Full scan request failed: " .. tostring(err)) end
         -- Watchdog: if Blizzard never answers (request inside its 15-min window,
         -- or the AH hiccuped), give up cleanly instead of hanging at 0% forever
         -- with AH.scanning blocking everything that waits on it.
@@ -535,7 +633,7 @@ function AH:StartFullScan()
                 if AH.OnScanComplete then SafeCall(AH.OnScanComplete, AH, "full") end
             end
         end)
-    end)
+    end
 
     if AH.OnScanStart then SafeCall(AH.OnScanStart, AH, "full") end
     return true
@@ -611,8 +709,10 @@ function AH:_FinishFullScan()
     -- the last scan's dump calls, to check the rule against real listings (2026-11-21): itemID -> "price|levels"
     -- with the cheapest 12 price levels as "unit:qty"; replaced every full scan, at most 400 items
     local log, logged = {}, 0
+    local usuals = {}   -- each item's usual price BEFORE this scan changed today's low (Times.lua: cheapest by time)
     for itemID, list in pairs(self._scanMin or {}) do
         local usual, nDays = self:GetMarketMean(itemID, 7)
+        if usual and (nDays or 0) >= 3 then usuals[itemID] = usual end
         local price, info, rows = AH.MarketPrice(list, (nDays or 0) >= 3 and usual or nil)
         if price then
             self:SetPrice(itemID, price, qty[itemID], n[itemID], names[itemID], info and info.min)
@@ -636,6 +736,13 @@ function AH:_FinishFullScan()
     if type(VoidUIAuctionDB) == "table" and self._scanMin then
         VoidUIAuctionDB._marketLog = { t = time(), rule = AH.MARKET_RULE, items = log }
     end
+    -- watched items (the shopping list, Watch.lua): log each one's cheapest price and count, none-up included, and
+    -- alert at or under your max
+    if self._scanMin and AH.Watch then pcall(AH.Watch.FullScan, self._scanMin) end
+    -- every item: this scan's cheapest vs its usual price, by server time of day (Times.lua)
+    if self._scanMin and AH.Times then
+        pcall(AH.Times.FullScan, self._scanMin, function(id) return usuals[id] end, self._scanDataAt or time())
+    end
     -- what sold since this house's last scan (Sales.lua: listings gone while they still had time left)
     self._salesFound = nil
     if self._scanMin and AH.SalesFromScan then
@@ -648,9 +755,9 @@ function AH:_FinishFullScan()
     self.scanType = nil
     self.scanProgress = 1
     self._processingBatch = false
-    -- ReplicateItems doesn't go through the AH throttle system,
-    -- so THROTTLED_SYSTEM_READY may never fire — unstick the queue
-    throttleReady = true
+    -- (No throttleReady reset here any more: the full scan's request no longer goes through the throttle queue, so it
+    -- holds nothing to free, and a reset could let the queue move on while a search or purchase is still waiting for
+    -- its answer. Sol 11-23.)
     if not VoidUIAuctionDB then VoidUIAuctionDB = {} end
     if not VoidUIAuctionDB._lastScanBy then
         -- first per-house scan: the one old time belongs to the plain pool, before it's overwritten below
@@ -943,7 +1050,11 @@ function mod:OnEvent(event, ...)
         local cfg = VoidUI:GetModuleConfig("Auction")
         local stale = cfg.autoScanWhenStale ~= false
             and (time() - (AH:GetLastFullScan() or 0)) > 12 * 3600
-        if (cfg.autoScanOnOpen or stale) and AH:CanFullScan() then
+        -- watched items (the shopping list, Watch.lua): a full scan on every visit (Blizzard allows one per 15 min)
+        -- logs their price and count at that time of day and alerts at or under your max. The full scan uses no
+        -- search-throttle slot; per-item searches hung the AH's searches on WoW Forever (11-23, see Core.lua).
+        local watching = cfg.watchScan ~= false and type(cfg.shoppingList) == "table" and #cfg.shoppingList > 0
+        if (cfg.autoScanOnOpen or stale or watching) and AH:CanFullScan() then
             C_Timer.After(0.5, function()
                 AH:StartFullScan()
             end)

@@ -326,6 +326,12 @@ local function OnItemTooltip(tt, data)
         tt:AddLine("  " .. (market and ("Sells: " .. market) or "") .. ((market and mine) and " · " or "")
             .. (mine and ("you " .. mine) or ""), 0.7, 0.8, 0.9)
     end
+    -- a watched item (the shopping list, Watch.lua): your max, the last price seen, how often it was under your max
+    local watch = ah.Watch and ah.Watch.TooltipText(itemID)
+    if watch then tt:AddLine("  " .. watch, 0.4, 0.9, 0.4) end
+    -- when it's cheapest, by server time (Times.lua): only with enough scans, or a watched item's coverage
+    local when = ah.Times and ah.Times.TooltipText(itemID)
+    if when then tt:AddLine("  " .. when, 0.55, 0.8, 0.95) end
     -- a profit resting on one listing or an old price: say so where you'd act on it
     local shaky = (age and age >= STALE) or listed == 1
     -- On a merchant's page the question is buy here and resell, not list-or-vendor (the user, 2026-11-10,

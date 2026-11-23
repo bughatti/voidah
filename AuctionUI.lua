@@ -4377,6 +4377,27 @@ function BuildScanTab(parent)
         removeBtn:SetPoint("RIGHT", row, "RIGHT", 0, 0)
         row._removeBtn = removeBtn
 
+        -- hover: when it's cheapest, by server time (Times.lua; the user, 2026-11-23: "cheapest around 11pm server
+        -- time"). row._itemID is set in UpdateShoppingList.
+        row:EnableMouse(true)
+        row:SetScript("OnEnter", function(self)
+            local id = self._itemID
+            local Tm = AH.Times
+            if not id or not Tm then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:AddLine((self._itemName or ("Item " .. id)) .. ": by server time (last 30 days)", 0, 0.78, 1)
+            local rows = Tm.WatchRows(id)
+            if #rows == 0 then
+                GameTooltip:AddLine("No scans yet. Each visit to the auction house adds one.", 0.7, 0.7, 0.7)
+            else
+                for _, r in ipairs(rows) do GameTooltip:AddDoubleLine(r[1], r[2], 1, 1, 1, 0.85, 0.85, 0.85) end
+            end
+            local line = Tm.TooltipText(id)
+            if line then GameTooltip:AddLine(line, 0.55, 0.8, 0.95, true) end
+            GameTooltip:Show()
+        end)
+        row:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
         row:Hide()
         parent._shopRows[i] = row
     end
@@ -4658,14 +4679,21 @@ function OnShoppingSearchResult(itemID, livePrice)
                 end
             end
 
-            if livePrice and livePrice > 0 and threshold and threshold > 0 and livePrice <= threshold then
+            -- the cheapest one up counts (livePrice leaves single dumps out of the market price, but a cheap
+            -- one is exactly what you're waiting for); Watch.lua logged it from this same search
+            local price = livePrice
+            local cheap = AH.Watch and AH.Watch.Cheapest(itemID, 120)
+            if cheap and (not price or cheap < price) then price = cheap end
+            if price and price > 0 and threshold and threshold > 0 and price <= threshold then
                 shopAlertResults[#shopAlertResults + 1] = {
                     itemID = itemID,
                     name = entry.itemName,
-                    price = livePrice,
+                    price = price,
                     threshold = threshold,
                 }
-                FireShoppingAlert(entry.itemName, livePrice, threshold)
+                -- one alert per find: Watch.lua already alerted from the search itself (it skips a repeat)
+                if AH.Watch then AH.Watch.Alert(itemID, entry.itemName, price, threshold)
+                else FireShoppingAlert(entry.itemName, price, threshold) end
             end
             break
         end
@@ -4895,6 +4923,10 @@ function UpdateShoppingList(parent)
         local entry = list[i]
         if entry then
             local price = AH:GetPrice(entry.itemID)
+            -- the cheapest one seen in the last hour (Watch.lua): the market price leaves a lone cheap listing out,
+            -- and that one is what you're waiting for
+            local cheap = AH.Watch and AH.Watch.Cheapest(entry.itemID, 3600)
+            if cheap and (not price or cheap < price) then price = cheap end
             local priceStr = price and VoidUI:FormatMoney(price) or "no data"
             local threshStr = (entry.threshold and entry.threshold > 0) and VoidUI:FormatMoney(entry.threshold) or "auto"
 
@@ -4905,6 +4937,7 @@ function UpdateShoppingList(parent)
             end
 
             row._text:SetText(color .. entry.itemName .. "|r — " .. priceStr .. "  |cff888888(max: " .. threshStr .. ")|r")
+            row._itemID, row._itemName = entry.itemID, entry.itemName   -- the hover's time table (Times.lua)
             row._removeBtn:Show()
 
             -- Wire Buy button: switch to Browse tab and search this item
@@ -5279,6 +5312,16 @@ local function MarketFrom(list, itemID)
     local usual, nDays = AH:GetMarketMean(itemID, 7)
     local price, info, rows = AH.MarketPrice(list, (nDays or 0) >= 3 and usual or nil)
     if price and info and info.min then AH:NoteLow(itemID, info.min) end
+    -- a watched item (Watch.lua): the cheapest and how many are up, logged; an alert at or under your max. The whole
+    -- result is in (WholeMarket), so an empty list means none are up.
+    if AH.Watch then
+        local lo, units = nil, 0
+        for _, r in ipairs(list) do
+            if r[1] and r[1] > 0 and (not lo or r[1] < lo) then lo = r[1] end
+            units = units + (r[2] or 1)
+        end
+        pcall(AH.Watch.Seen, itemID, lo, units)
+    end
     if info then info.rows = rows end   -- every listing, cheapest first: the Sell tab's plan (step 3) queues behind them
     return price, info
 end
@@ -5360,6 +5403,18 @@ function AH:OnItemSearchResults(itemKey)
                 }
             end
         end
+        -- a watched item you opened to buy (Watch.lua): its cheapest is logged too (sorted by price, so the first
+        -- page has it; the count only when the whole list is in)
+        if AH.Watch and #buyListings > 0 then
+            local lo, units = nil, 0
+            for _, l in ipairs(buyListings) do
+                local b = l.buyoutAmount
+                if b and b > 0 and (not lo or b < lo) then lo = b end
+                units = units + (l.quantity or 1)
+            end
+            local full = C_AuctionHouse.HasFullItemSearchResults and C_AuctionHouse.HasFullItemSearchResults(buyItemKey)
+            if lo then pcall(AH.Watch.Seen, itemKey.itemID, lo, full and units or nil) end
+        end
         browseOffset = 0
         RefreshBrowseRows()
         ContinueMultiBuy()   -- buying several from a grouped row: on to the next auction
@@ -5417,6 +5472,16 @@ function AH:OnCommoditySearchResults(itemID)
                     containsOwnerItem = r.containsOwnerItem,
                 }
             end
+        end
+        if AH.Watch and #buyListings > 0 then   -- a watched commodity (Watch.lua), as for items above
+            local lo, units = nil, 0
+            for _, l in ipairs(buyListings) do
+                local u = l.unitPrice
+                if u and u > 0 and (not lo or u < lo) then lo = u end
+                units = units + (l.quantity or 1)
+            end
+            local full = C_AuctionHouse.HasFullCommoditySearchResults and C_AuctionHouse.HasFullCommoditySearchResults(itemID)
+            if lo then pcall(AH.Watch.Seen, itemID, lo, full and units or nil) end
         end
         browseOffset = 0
         RefreshBrowseRows()

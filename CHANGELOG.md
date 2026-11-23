@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.14.0] — 2026-11-23
+
+- **Watch an item for a price (new).** Put an item on the **Scan** tab's shopping list with the most you'd pay (or 0 for automatic). Every time VoidAH sees it on the auction house, it checks it: at or under your price you get a chat line and a sound ("Garona at 13g 97s, your max 25g (7 up)"). One alert per item per 15 minutes, unless it gets cheaper.
+- **A price log for watched items.** Each sighting keeps the time, the cheapest price and how many were up (none up too), for 30 days per auction house. That's the data for "is it cheaper at night or on weekends". The item's tooltip says your max, the last price seen and how often it was at or under your max.
+- **A full scan each visit while you watch something** (Blizzard allows one every 15 minutes), so every trip to the auction house adds a data point.
+- **The shopping list shows the cheapest one up**, not only the market price, when a lone cheap listing is what you're waiting for.
+- **When is it cheapest? (new).** VoidAH learns the cheapest time of day by server time, in 2-hour blocks:
+  - **Watched items:** hover a shopping-list row on the Scan tab for its price at each time of day, how often it was under your max, and weekdays vs weekends. The tooltip says "Cheapest around 10 PM-12 AM server time (usually 18g, 6 scans)".
+  - **Every item:** each full scan notes how cheap each item is against its usual price at that time of day. Once there's enough, any item's tooltip can say "Usually cheapest around 10 PM-12 AM server time (12% under other times)".
+  - A best time is only named with enough scans (3 at each of at least 3 times of day) and a clear difference. Until then a watched item says which times still need a scan. Times nobody has scanned are never guessed.
+- **Fixed on WoW Forever: characters the game never told its realm name.** Their prices, scans and sales were saved under a blank name. They now get a real one, everything saved before moves there once, and your other characters on the same client share the same prices, since everyone on a Forever server uses the same auction house.
+- **Fixed: the auction house could stop answering searches** (seen on WoW Forever). When the game's ready signal never came, every search and even the full scan waited forever, through a /reload. VoidAH now sends anyway after 5 seconds, and the full scan no longer waits behind searches.
+
 ## [1.13.0] — 2026-11-22
 
 - **Sell fast or best price (new).** Two buttons on the Sell tab show the price for each goal and how long it should take: **Sell fast** (your usual undercut) and **Best price** (the highest price that should still sell within 12 hours, from how fast the item sells there and the listings cheaper than yours). Never above what the item has been seen selling for, nor where your own listings expired. Your choice stays for the next item. Often the best price is just under the next listing instead of 5% under the cheapest.

@@ -40,6 +40,7 @@ VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Se
 - **WoW Forever: "Kept: you need it (Fishing)"** under the price of a tool or class item you need, instead of "list it" advice
 - **How fresh the price is:** "· 1h 27m ago" on every price (orange after 6 hours) and "· 1 listed" when a single listing sets it
 - **What sells:** "Sells: 240 in 24h at ~40s · you sold 12 of 15 at 41s" when your scans or your own sales know it
+- **Watched items:** "Watching (max 25g): last seen 13g 97s 1m ago · at or under your max at 2 of 2 checks", and the cheapest time of day once VoidAH knows it
 - **At a merchant: buy here, resell on the AH.** Items a vendor sells show their real profit after the AH cut ("Buy here 14s 40c, resell: +26s 47c profit each"), and say to check the AH first when the price is old or from one listing
 
 ### Deals
@@ -57,6 +58,9 @@ A type picker at the top left switches between kinds of deals:
 - **WoW Forever: one price list per auction house.** Your faction's auction house, the other faction's, and the neutral one (Booty Bay, Gadgetzan and Everlook share it) are separate markets. At Booty Bay VoidAH scans and prices for Booty Bay, in your capital for your faction's house, and away from an auction house it uses your faction's prices. The Scan tab says which one you're looking at
 - **Prices stay fresh on their own** — if your last full scan is over 12 hours old, opening the AH runs one in the background while you browse
 - A **shopping list** with a Buy button on every row — survives reloads
+- **Watch an item for a price:** give a shopping-list item the most you'd pay (or 0 for automatic). Whenever VoidAH sees it at or under that price you get a chat line and a sound ("Garona at 13g 97s, your max 25g (7 up)"). While something is on the list, each visit to the auction house runs a full scan (Blizzard allows one every 15 minutes), so every visit checks it
+- **A price log for watched items:** each sighting keeps the time, the cheapest price and how many were up, for 30 days
+- **When is it cheapest?** VoidAH learns the cheapest time of day by server time, in 2-hour blocks. Hover a shopping-list row for its price at each time of day, how often it was under your max, and weekdays vs weekends. Every item's tooltip can also say "Usually cheapest around 10 PM-12 AM server time (12% under other times)". A best time is only named with enough scans at enough times of day and a clear difference; times nobody has scanned are never guessed
 
 ### Professions (with VoidProf)
 - **VoidProf works out the plan, VoidAH shows what to buy.** VoidProf is the profession companion; this tab is its shopping view at the Auction House
