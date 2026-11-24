@@ -2,6 +2,8 @@
 
 **Works on:** WoW Midnight · WoW Forever
 
+> **⚠ Please update to 1.15.1: bait listings.** On WoW Forever some sellers list an item with a normal starting bid and a huge buyout (a Runecloth Bag: 4g 31s bid, **103g 31s** buyout). The auction house sorts items by the bid, so it showed at the top as if it were the cheapest, and older VoidAH versions showed only the buyout. 1.15.1 sorts listings by the buyout, shows the bid, and warns you (**Buy anyway**) before you pay more than twice the cheapest one.
+
 **A full Auction House replacement with built-in profession leveling plans and shopping lists.**
 
 VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Sell, My Auctions, Deals, Scan, and **Professions**. With **VoidProf** installed, the Professions tab shows what's left to buy to level any of the 9 crafting professions, priced from your Auction House data, with one-click Buy buttons that track how many you've bought as you go.

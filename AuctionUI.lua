@@ -1698,13 +1698,31 @@ ShowConfirmBar = function(opts)
         if tooLow then
             bar._info:SetText(bar._info:GetText() .. ("  |cffff4040Requires level %d (you're %d): you can't wear it yet.|r"):format(tooLow, UnitLevel("player") or 0))
         end
+        -- Bait listings: a starting bid near the real price with a huge buyout. The server sorts items by the bid, so
+        -- it sat on top as the "cheapest" (the user paid 103g 31s for a 4g 99s Runecloth Bag, 2026-11-23). Say so
+        -- whenever this buyout is over twice the cheapest other one.
+        local cheapest
+        for _, l in ipairs(buyListings or {}) do
+            local b = VoidUI.AH.SafeNum(l.buyoutAmount)
+            if b and b > 0 and l.auctionID ~= opts.auctionID and (not cheapest or b < cheapest) then cheapest = b end
+        end
+        local what = "the cheapest"
+        if not cheapest and opts.itemID then   -- the only one up: against the price from your scans
+            cheapest, what = VoidUI.AH.SafeNum(AH:GetPrice(opts.itemID)), "the market price"
+            if cheapest and cheapest <= 0 then cheapest = nil end
+        end
+        local overpriced = buyoutSafe and cheapest and buyoutSafe > cheapest * 2
+        if overpriced then   -- first, so it is the one thing never cut off
+            bar._info:SetText(("|cffff4040%dx %s (%s)!|r  "):format(math.floor(buyoutSafe / cheapest + 0.5), what,
+                VoidUI:FormatMoney(cheapest)) .. bar._info:GetText())
+        end
         -- Several identical auctions in one row: ask how many. Each one is its own auction,
         -- and PlaceBid needs a click per auction (restricted API), so Confirm Buy steps
         -- through them one click at a time, never above the starting price.
         bar._qtyLabel:SetShown(avail > 1)
         bar._qtyBox:SetShown(avail > 1)
         bar._qtyBox:SetText("1")
-        bar._confirmBtn._text:SetText(tooLow and "|cffff4040Buy anyway|r" or "|cff00ff00Confirm Buy|r")
+        bar._confirmBtn._text:SetText((tooLow or overpriced) and "|cffff4040Buy anyway|r" or "|cff00ff00Confirm Buy|r")
         bar._confirmBtn:SetScript("OnClick", function()
             if opts.auctionID and buyoutSafe then
                 local m = bar._multi
@@ -1890,7 +1908,8 @@ PopulateBuyRow = function(row, listing, visualIndex)
         local price = buyout or bid
         row._price:SetText(price and ((buyout and "" or "|cffaaaaaaBid|r ") .. VoidUI:FormatMoney(price)) or "N/A")
         row._market:SetText(BUY_TIME_LEFT[listing.timeLeft] or "")
-        row._deal:SetText("")
+        -- a listing with a buyout can also take bids: show the bid (minBid: the least a bid can be now) when lower
+        row._deal:SetText((buyout and bid and bid < buyout) and VoidUI:FormatMoney(bid) or "")
         row._extra:SetText(listing.containsOwnerItem and "|cff888888[YOURS]|r"
             or (buyout and "|cff00ff00[BUY]|r" or "|cffffd100[BID]|r"))
         row:SetScript("OnClick", function()
@@ -2434,7 +2453,7 @@ function BuildBrowseTab(parent)
         { "Qty", "CENTER", 275, 40 },
         { "Price", "RIGHT", 320, 140 },
         { "Time Left", "RIGHT", 470, 120 },
-        { "", "CENTER", 600, 60 },
+        { "Bid", "CENTER", 600, 60 },   -- the starting bid, when lower than the buyout
         { "Action", "CENTER", 670, 100 },
     }
     for _, col in ipairs(buyCols) do
@@ -2520,7 +2539,9 @@ function BuildBrowseTab(parent)
     confirmInfo:SetPoint("LEFT", 14, 0)
     confirmInfo:SetWidth(400)
     confirmInfo:SetJustifyH("LEFT")
-    confirmInfo:SetWordWrap(false)
+    -- wraps (up to 3 lines fit the 44px bar): a price warning must never be cut off (Sol, 1.15.1)
+    confirmInfo:SetWordWrap(true)
+    if confirmInfo.SetMaxLines then confirmInfo:SetMaxLines(3) end
     confirmBar._info = confirmInfo
 
     -- Qty editbox (for commodities)
@@ -5403,9 +5424,20 @@ function AH:OnItemSearchResults(itemKey)
                     containsAccountItem = r.containsAccountItem,
                     containsOwnerItem = r.containsOwnerItem,
                     variant = AuctionVariant(r.itemLink),
+                    order = idx,
                 }
             end
         end
+        -- Sort by what you'd pay to buy it now (the buyout; a bid-only listing by its bid), cheapest first. The
+        -- server's price order isn't that on WoW Forever: a 103g 31s Runecloth Bag sat above the 4g 99s 99c ones
+        -- (the user, 2026-11-23), likely a cheap starting bid under a huge buyout.
+        local function payNow(l) return l.buyoutAmount or l.minBid end
+        table.sort(buyListings, function(a, b)
+            local pa, pb = payNow(a), payNow(b)
+            if pa and pb and pa ~= pb then return pa < pb end
+            if (pa == nil) ~= (pb == nil) then return pa ~= nil end
+            return a.order < b.order
+        end)
         -- a watched item you opened to buy (Watch.lua): its cheapest is logged too (sorted by price, so the first
         -- page has it; the count only when the whole list is in)
         if AH.Watch and #buyListings > 0 then

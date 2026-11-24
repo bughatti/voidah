@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.15.1] — 2026-11-23
+
+**Please update: bait listings could cost you gold.** On WoW Forever some sellers list an item with a normal starting bid and a huge buyout, for example a Runecloth Bag with a 4g 31s bid and a **103g 31s** buyout. The auction house sorts items by the bid, so that listing showed at the top of the list, above the real 4g 99s bags, and VoidAH showed only its buyout. A player bought it thinking it was the cheapest. VoidAH never charged more than the price shown, but the list made the trap easy to fall into. Now:
+
+- **Listings are sorted by the buyout**, cheapest first, whatever order the auction house sends them in.
+- **A Bid column** shows the lowest bid you could place when it's under the buyout, so a bait listing is easy to spot.
+- **A warning before you buy:** when a buyout is more than twice the cheapest other one (or the market price when it's the only one up), the buy bar starts with "21x the cheapest (4g 99s 99c)!" and the button turns red: **Buy anyway**.
+
 ## [1.15.0] — 2026-11-23
 
 - **When does it sell best? (new).** From your full scans in pairs (two scans up to 3 hours apart show what sold in between), VoidAH works out how many of an item sell per hour at each time of day, by server time in 2-hour blocks. The Sell tab says "Sells best around 8 PM-10 PM server time: about 3.0 an hour, 0.5 at other times", and the item's tooltip adds "sells best 8 PM-10 PM". Only with 3 sales seen, 3 times of day each watched for an hour on at least 2 different days (one morning of scans is lumps, not a pattern), and a clear difference; until then the Sell tab says what's missing. Hours nobody watched are never guessed.
