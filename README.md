@@ -19,7 +19,7 @@ VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Se
 - **WoW Forever: what you can wear.** Gear goes by its required level there, not its item level, so a row of gear you're too low for says **(requires 54)** in red, its tooltip says **Requires level 54** (green when you can wear it), and buying it asks you first. **Usable only** hides it
 - **Upgrade arrows**: gear that beats what you're wearing in that slot gets an arrow and "+N ilvl". **Green** = it has your spec's two best secondary stats, **orange** = it's an upgrade but carries a weaker one, **grey** = an upgrade whose stats can't be read (hover to check). Stat priorities come from what the top Mythic+ players of each spec actually wear (Blizzard's own data)
 - **"Midnight only"** (on by default at max level, off while leveling) hides older-expansion items, so you never buy an old enchant or gem that won't work on current gear
-- **Secure buy bar** with a quantity box
+- **Secure buy bar** with a quantity box. Buying a quantity of a stackable (ore, herbs, cloth) shows the real total first; when the cheap ones run out and the average climbs, it says so in red ("avg is 3.0x the cheapest") and the button reads **Buy anyway**
 - **Ctrl-click** any item to preview it in the dressing room, **Shift-click** to link it in chat
 
 ### Sell

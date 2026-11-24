@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.15.2] — 2026-11-24
+
+- **A warning when a big buy climbs into pricey listings.** Buying a quantity of a stackable (ore, herbs, cloth, potions) takes the cheapest ones first, then the next cheapest. When the cheap ones run out, the average you pay can be several times the price on the top row. After **Get Price**, the buy bar now says so in red, for example "avg is 3.0x the cheapest (1s): the cheap ones run out", and the button reads **Buy anyway**. It also warns when the average is over twice the market price from your scans.
+- **Stackables are listed cheapest first** too, whatever order the auction house sends them in (gear and bags already were in 1.15.1).
+- We checked the rest of VoidAH against the bait listings on WoW Forever (a starting bid near the market with a 45g-49g buyout, on top of the list on bags, crafting writs and potions): the browse prices, Deals, the shopping list, buying several at once and the sold-price tracking all go by the buyout and aren't fooled by them.
+
 ## [1.15.1] — 2026-11-23
 
 **Please update: bait listings could cost you gold.** On WoW Forever some sellers list an item with a normal starting bid and a huge buyout, for example a Runecloth Bag with a 4g 31s bid and a **103g 31s** buyout. The auction house sorts items by the bid, so that listing showed at the top of the list, above the real 4g 99s bags, and VoidAH showed only its buyout. A player bought it thinking it was the cheapest. VoidAH never charged more than the price shown, but the list made the trap easy to fall into. Now:

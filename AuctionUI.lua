@@ -5505,9 +5505,17 @@ function AH:OnCommoditySearchResults(itemID)
                     numOwnerItems = r.numOwnerItems or 0,
                     containsAccountItem = r.containsAccountItem,
                     containsOwnerItem = r.containsOwnerItem,
+                    order = idx,
                 }
             end
         end
+        -- cheapest first, whatever order the server sent (items come sorted by the starting bid on WoW Forever)
+        table.sort(buyListings, function(a, b)
+            local pa, pb = a.unitPrice, b.unitPrice
+            if pa and pb and pa ~= pb then return pa < pb end
+            if (pa == nil) ~= (pb == nil) then return pa ~= nil end
+            return a.order < b.order
+        end)
         if AH.Watch and #buyListings > 0 then   -- a watched commodity (Watch.lua), as for items above
             local lo, units = nil, 0
             for _, l in ipairs(buyListings) do
@@ -5608,11 +5616,22 @@ function AH:OnCommodityPriceUpdated(unitPrice, totalPrice)
     local bar = tabFrames and tabFrames[1] and tabFrames[1]._confirmBar
     if not bar then return end
     local total, unit = VoidUI.AH.SafeNum(totalPrice), VoidUI.AH.SafeNum(unitPrice)
-    bar._info:SetText(("|cff00c7ff%d x %s|r  —  |cffffffff%s|r%s"):format(
+    local avg = unit or (total and p.quantity > 0 and math.floor(total / p.quantity + 0.5)) or nil
+    -- a big order climbs into the pricey listings: say so before "Buy Now" (AH trap audit, 2026-11-24)
+    local cheapest
+    if buyIsCommodity and buyItemKey and buyItemKey.itemID == p.itemID then
+        for _, l in ipairs(buyListings or {}) do
+            local u = l.unitPrice
+            if u and u > 0 and (not cheapest or u < cheapest) then cheapest = u end
+        end
+    end
+    local market = VoidUI.AH.SafeNum(AH:GetPrice(p.itemID))
+    local warn = VoidAH_Money and VoidAH_Money.CommodityAvgWarning(avg, cheapest, market)
+    bar._info:SetText((warn and ("|cffff4040" .. warn .. "|r  ") or "") .. ("|cff00c7ff%d x %s|r  —  |cffffffff%s|r%s"):format(
         p.quantity, p.name or "item",
         total and VoidUI:FormatMoney(total) or "?",
-        unit and ("  (avg " .. VoidUI:FormatMoney(unit) .. ")") or ""))
-    bar._confirmBtn._text:SetText("|cff00ff00Buy Now|r")
+        avg and ("  (avg " .. VoidUI:FormatMoney(avg) .. ")") or ""))
+    bar._confirmBtn._text:SetText(warn and "|cffff4040Buy anyway|r" or "|cff00ff00Buy Now|r")
     bar._confirmBtn:SetScript("OnClick", function()
         if pendingCommodityPurchase ~= p then return end
         C_AuctionHouse.ConfirmCommoditiesPurchase(p.itemID, p.quantity)

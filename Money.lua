@@ -231,6 +231,20 @@ function M.PriceWarning(unitPrice, median, nDays, vendorEach, rate)
     return nil
 end
 
+-- Buying a commodity in quantity: the server fills it from the cheapest listings up, so a big order can climb into
+-- pricey ones (audit 2026-11-24). avg = the server's quoted average each; cheapest = the cheapest unit price listed;
+-- market = your scans' price. Returns the warning text, or nil when the average is fine.
+function M.CommodityAvgWarning(avg, cheapest, market)
+    if type(avg) ~= "number" or avg <= 0 then return nil end
+    if type(cheapest) == "number" and cheapest > 0 and avg > cheapest * 1.5 then
+        return ("avg is %.1fx the cheapest (%s): the cheap ones run out"):format(math.ceil(avg / cheapest * 10) / 10, VoidUI:FormatMoney(cheapest))
+    end
+    if type(market) == "number" and market > 0 and avg > market * 2 then
+        return ("avg is %.1fx the market price (%s)"):format(math.ceil(avg / market * 10) / 10, VoidUI:FormatMoney(market))
+    end
+    return nil
+end
+
 local function Money(c) return VoidUI:FormatMoney(math.max(0, math.floor(c or 0))) end
 
 function M.BreakdownText(b, depositExact, durationLabel)
