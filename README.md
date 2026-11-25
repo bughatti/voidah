@@ -23,6 +23,7 @@ VoidAH replaces Blizzard's Auction House window with a six-tab panel: Browse, Se
 - **Ctrl-click** any item to preview it in the dressing room, **Shift-click** to link it in chat
 
 ### Sell
+- **Right-click an item in your bags** to put it in the Sell tab (Blizzard's bags, and VoidBags too)
 - Stack-size and total-quantity inputs with a **deposit calculator**
 - **Smart undercut** — fills in a price just below the market. A handful of listings dumped far under the rest don't drag yours down (it says how many it left out), nor does one far under the item's usual price
 - **Sell fast or best price:** two buttons under **What sells** show the price for each goal and how long it should take to sell. **Sell fast** is your usual undercut; **Best price** is the highest price that should still sell within 12 hours. VoidAH works that out from how fast the item really sells there and from the listings cheaper than yours (buyers take the cheapest first). It never suggests more than the item has been seen selling for, nor a price where your own listings expired. Your choice stays for the next item

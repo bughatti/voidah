@@ -750,7 +750,20 @@ local function stackComparisons()
     -- loop ("dependent region" error; Sol review)
     local cpt, crp, cx = pt, rp, 0
     if beside then
-        if side == "left" then cpt, crp, cx = "TOPRIGHT", "TOPLEFT", -4
+        -- away from the window when the column fits there, else over the list: with no room the game clamped it
+        -- onto the item tooltip and hid its first lines (retail 11-25: Algari Competitor's Greatsword, a wide
+        -- tooltip left of the window, the Shiv's comparison over its "Two-Hand" and damage)
+        local need = 0
+        for _, t in ipairs(shown) do need = math.max(need, (t:GetWidth() or 0) * t:GetEffectiveScale()) end
+        need = need + 4 * s
+        local outer
+        if side == "left" then
+            outer = (tip:GetLeft() or 0) * s
+        else
+            outer = (UIParent:GetRight() or 0) * UIParent:GetEffectiveScale() - (tip:GetRight() or 0) * s
+        end
+        local away = outer >= need
+        if (side == "left") == away then cpt, crp, cx = "TOPRIGHT", "TOPLEFT", -4
         else cpt, crp, cx = "TOPLEFT", "TOPRIGHT", 4 end
     end
     local down = GAP
@@ -5669,6 +5682,17 @@ function AH:OnCommodityPurchaseFailed()
     pendingCommodityPurchase = nil
     HideConfirmBar()
     print("|cffff4444[VoidAH]|r Purchase failed! Price may have changed.")
+end
+
+-- A bag addon hands a right-clicked item to the Sell tab, as Blizzard's bags do with the AH open (2026-11-25, a
+-- CurseForge comment on VoidBags: "not being able to right-click items into auction is frustrating"; reproduced on
+-- Forever: the right-click ATE the food instead). VoidBags calls this; true = the Sell tab took it.
+function VoidAH_SetSellItem(itemLocation)
+    if not (AH and AH.ahOpen and panel and panel:IsShown() and tabFrames and tabFrames[2]) then return false end
+    if not (itemLocation and C_Item.DoesItemExist(itemLocation)) then return false end
+    if activeTab ~= 2 then SetActiveTab(2) end
+    SellTab_SetItem(tabFrames[2], itemLocation)
+    return true
 end
 
 ----------------------------------------------------------------------

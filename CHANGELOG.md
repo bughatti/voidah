@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.15.3] — 2026-11-25
+
+- **Comparison tooltips no longer cover the item.** Hovering gear in the Browse list with two weapons equipped could stack a comparison right on top of the item's own tooltip (its "Two-Hand" and damage lines hidden) when the item tooltip was wide and near the edge of the screen. The comparisons now go where they fit.
+- **VoidBags 1.8.0 can right-click items into the Sell tab** (VoidAH lets bag addons hand an item to it).
+
 ## [1.15.2] — 2026-11-24
 
 - **A warning when a big buy climbs into pricey listings.** Buying a quantity of a stackable (ore, herbs, cloth, potions) takes the cheapest ones first, then the next cheapest. When the cheap ones run out, the average you pay can be several times the price on the top row. After **Get Price**, the buy bar now says so in red, for example "avg is 3.0x the cheapest (1s): the cheap ones run out", and the button reads **Buy anyway**. It also warns when the average is over twice the market price from your scans.
