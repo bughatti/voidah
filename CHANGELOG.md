@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.15.5] — 2026-11-26
+
+- **No more hitch while crafting.** Every item you made rebuilt VoidAH's recipe list for the Professions tab (every recipe's reagents looked up again), and redrew that tab even with the auction house closed. Known recipes now keep their reagents, the update waits until a craft is done, and the tab only redraws when it's on screen.
+
 ## [1.15.4] — 2026-11-25
 
 - **VoidHub window (WoW Forever):** right-click the VoidHub minimap button (or type /vhub) for every Void addon in one window: quests, layers, gear, gold, professions, combat, dungeons and more, each drawn from its own addon, with a Start page for what to do right now. Addons you don't have show a screenshot and how to get them. Shift + right-click opens Copy settings from another character. It comes inside every Void addon: nothing extra to install.

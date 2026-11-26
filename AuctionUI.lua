@@ -143,6 +143,10 @@ local function CaptureTradeSkillSnapshot()
 
     VoidUIAuctionDB = VoidUIAuctionDB or {}
     VoidUIAuctionDB.profCache = VoidUIAuctionDB.profCache or {}
+    -- known recipes keep their reagents (they never change): no schematic lookup for every recipe on every craft,
+    -- which was the screen hitch while crafting (the user, 2026-11-26, Blacksmithing / Engineering)
+    local prevCache = VoidUIAuctionDB.profCache[prof.professionName]
+    local prevRecipes = prevCache and prevCache.professionID == prof.professionID and prevCache.recipes or nil
 
     local cache = {
         professionID  = prof.professionID,
@@ -173,7 +177,12 @@ local function CaptureTradeSkillSnapshot()
 
     for _, rID in ipairs(recipeIDs) do
         local rInfo = C_TradeSkillUI.GetRecipeInfo(rID)
-        if rInfo and rInfo.learned then
+        local old = prevRecipes and prevRecipes[rID]
+        if rInfo and rInfo.learned and old and old.reagents and next(old.reagents) ~= nil then   -- an empty list = the lookup failed: ask again
+            cache.recipes[rID] = { id = rID, name = rInfo.name, difficulty = rInfo.relativeDifficulty,
+                categoryID = rInfo.categoryID, reagents = old.reagents }
+            cache.learnedCount = cache.learnedCount + 1
+        elseif rInfo and rInfo.learned then
             local reagents = {}
             local ok, schematic = pcall(C_TradeSkillUI.GetRecipeSchematic, rID, false)
             if ok and schematic and schematic.reagentSlotSchematics then
@@ -205,11 +214,16 @@ end
 local profCacheFrame = CreateFrame("Frame")
 profCacheFrame:RegisterEvent("TRADE_SKILL_LIST_UPDATE")
 profCacheFrame:RegisterEvent("TRADE_SKILL_SHOW")
+-- TRADE_SKILL_LIST_UPDATE fires after recipes finish loading (that's when GetFilteredRecipeIDs returns a complete
+-- list), and several times per craft: wait for the burst to end, then capture once.
+local profCapturePending = false
 profCacheFrame:SetScript("OnEvent", function(_, event)
-    -- TRADE_SKILL_LIST_UPDATE fires after recipes finish loading; that's
-    -- when GetFilteredRecipeIDs returns a complete list.
-    if event == "TRADE_SKILL_LIST_UPDATE" then
-        CaptureTradeSkillSnapshot()
+    if event == "TRADE_SKILL_LIST_UPDATE" and not profCapturePending then
+        profCapturePending = true
+        C_Timer.After(1, function()
+            profCapturePending = false
+            CaptureTradeSkillSnapshot()
+        end)
     end
 end)
 
@@ -6300,7 +6314,11 @@ function BuildProfessionsTab(parent)
         activeProfs = GetActiveProfessionInfo()
         for _, row in ipairs(profRows) do
             local p = plans[row._idx]
-            if p and p.skill == profName then row:Click() return end
+            -- only when the tab is on screen: with the AH closed this re-built the plan on every craft
+            if p and p.skill == profName then
+                if row:IsVisible() then row:Click() end
+                return
+            end
         end
     end
 end

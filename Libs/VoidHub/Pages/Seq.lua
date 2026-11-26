@@ -154,8 +154,10 @@ local function rotationMenu(owner)
     MenuUtil.CreateContextMenu(owner, function(_, root)
         root:CreateTitle("Suggested (comes with VoidSequencer, updated by us)")
         if #choices > 0 then
-            root:CreateRadio("Automatic (matches your hero tree)", function() return not mineName and pick == nil end,
-                function() if mineName then V.UseMine(nil) end; V.SetRotationPick(nil); refreshAll() end)
+            if not V.IS_FOREVER then   -- WoW Forever: no hero trees, just the class rotations (damage, tank)
+                root:CreateRadio("Automatic (matches your hero tree)", function() return not mineName and pick == nil end,
+                    function() if mineName then V.UseMine(nil) end; V.SetRotationPick(nil); refreshAll() end)
+            end
             for _, c in ipairs(choices) do
                 root:CreateRadio(c.label, function() return not mineName and pick == c.key end,
                     function() if mineName then V.UseMine(nil) end; V.SetRotationPick(c.key); refreshAll() end)
