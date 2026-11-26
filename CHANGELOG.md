@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.15.4] — 2026-11-25
+
+- **VoidHub window (WoW Forever):** right-click the VoidHub minimap button (or type /vhub) for every Void addon in one window: quests, layers, gear, gold, professions, combat, dungeons and more, each drawn from its own addon, with a Start page for what to do right now. Addons you don't have show a screenshot and how to get them. Shift + right-click opens Copy settings from another character. It comes inside every Void addon: nothing extra to install.
+
 ## [1.15.3] — 2026-11-25
 
 - **Comparison tooltips no longer cover the item.** Hovering gear in the Browse list with two weapons equipped could stack a comparison right on top of the item's own tooltip (its "Two-Hand" and damage lines hidden) when the item tooltip was wide and near the edge of the screen. The comparisons now go where they fit.
