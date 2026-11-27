@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.15.6] — 2026-11-27
+
+- **Commodity listings say "Total", not "Time Left".** Herbs, ore, cloth and other stacking goods have no time left per listing, so that column shows what the whole stack costs (quantity x price). It's labelled that way now. Gear and other single items still show Time Left and Bid.
+
 ## [1.15.5] — 2026-11-26
 
 - **No more hitch while crafting.** Every item you made rebuilt VoidAH's recipe list for the Professions tab (every recipe's reagents looked up again), and redrew that tab even with the auction house closed. Known recipes now keep their reagents, the update waits until a craft is done, and the tab only redraws when it's on screen.

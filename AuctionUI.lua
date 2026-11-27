@@ -2113,6 +2113,10 @@ RefreshBrowseRows = function()
     end
     if parent._buyColHeader then
         if browseView == BROWSE_VIEW_LISTINGS then
+            -- commodities (herbs, ore, cloth...) have no time left per listing: that column holds the total price
+            -- (quantity x price) and there is no bid (the user, 2026-11-27: "why does the time left have a price under it")
+            if parent._buyColTime then parent._buyColTime:SetText(buyIsCommodity and "Total" or "Time Left") end
+            if parent._buyColBid then parent._buyColBid:SetText(buyIsCommodity and "" or "Bid") end
             parent._buyColHeader:Show()
         else
             parent._buyColHeader:Hide()
@@ -2491,6 +2495,8 @@ function BuildBrowseTab(parent)
         fs:SetWidth(col[4])
         fs:SetJustifyH(col[2])
         fs:SetText(col[1])
+        -- relabelled per list (commodity: "Total", no bid) where the header is shown
+        if col[1] == "Time Left" then parent._buyColTime = fs elseif col[1] == "Bid" then parent._buyColBid = fs end
     end
 
     -- List area
